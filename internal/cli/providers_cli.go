@@ -1085,8 +1085,10 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			p.BalanceToken = v
 		case "access.key":
 			// a Volcengine account's access key, which Ark tells its
-			// Coding or Agent Plan's windows to (#1427), or a Tencent Cloud
-			// SecretId, which TokenHub tells Token Plan 企业版's usage to (#1574)
+			// Coding or Agent Plan's windows to (#1427), a Tencent Cloud
+			// SecretId, which TokenHub tells Token Plan 企业版's usage to
+			// (#1574), or an Alibaba Cloud AccessKey ID, which Bailian tells
+			// Token Plan 个人版's usage to
 			p.AccessKeyID = v
 		case "access.secret":
 			p.SecretAccessKey = v

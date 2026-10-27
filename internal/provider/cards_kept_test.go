@@ -134,7 +134,7 @@ func TestCachedCardsKeepBothKeysOfOneName(t *testing.T) {
 	// what the Usage page read of each key, kept for the restart (keepLast,
 	// as KeyBalances keeps a card: by the key, under the name it showed)
 	for i, key := range []string{"sk-one-key", "sk-two-key"} {
-		keepLast(SubscriptionQuota{Provider: "relay", Name: "Relay", User: "main",
+		keepLast(context.Background(), SubscriptionQuota{Provider: "relay", Name: "Relay", User: "main",
 			Balance: fmt.Sprintf("$%d.00", i+1)}, keyTag("balance", key))
 	}
 	forget := func() {

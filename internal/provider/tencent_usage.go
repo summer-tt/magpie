@@ -54,13 +54,15 @@ func TakesTencentAccessKey(p Provider) bool {
 
 // AccessKeyVendor is whose account access key p's plan is read with:
 // "volcengine" (Ark's Coding and Agent Plans), "tencent" (Token Plan
-// 企业版), or "" for none.
+// 企业版), "bailian" (Bailian's Token Plan 个人版), or "" for none.
 func AccessKeyVendor(p Provider) string {
 	switch {
 	case TakesVolcAccessKey(p):
 		return "volcengine"
 	case TakesTencentAccessKey(p):
 		return "tencent"
+	case TakesBailianAccessKey(p):
+		return "bailian"
 	}
 	return ""
 }

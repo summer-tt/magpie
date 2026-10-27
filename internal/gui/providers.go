@@ -163,7 +163,8 @@ type providerJSON struct {
 	// set, if empty, for those providers alone, which the editor asks it of
 	ZhipuTeam *provider.ZhipuTeam `json:"zhipuTeam,omitempty"`
 	// a Volcengine account's access key or a Tencent Cloud account's
-	// SecretId and SecretKey, which its plan's windows are read with
+	// SecretId and SecretKey or an Alibaba Cloud account's AccessKey ID
+	// and Secret, which its plan's windows are read with
 	// (provider.AccessKeyVendor): whether the provider takes one, whose,
 	// its ID, and whether a Secret is saved; never the Secret itself
 	AccessKey *accessKeyJSON `json:"accessKey,omitempty"`
@@ -279,8 +280,8 @@ type moveJSON struct {
 }
 
 // accessKeyJSON is a provider's account access key as the editor sees
-// it: whose ("volcengine", "tencent"), the ID, and whether a Secret is
-// saved, never the Secret.
+// it: whose ("volcengine", "tencent", "bailian"), the ID, and whether a
+// Secret is saved, never the Secret.
 type accessKeyJSON struct {
 	Vendor    string `json:"vendor"`
 	ID        string `json:"id"`
@@ -288,9 +289,10 @@ type accessKeyJSON struct {
 }
 
 // presetAccessKey is whose account access key a preset's plans are read
-// with ("volcengine", "tencent", "" for none) and, when only some of its
-// regions are such a plan (Tencent Cloud's Token Plan 企业版 beside its
-// personal plan and pay as you go, #1574), their ids; nil when all are.
+// with ("volcengine", "tencent", "bailian", "" for none) and, when only
+// some of its regions are such a plan (Tencent Cloud's Token Plan 企业版
+// beside its personal plan and pay as you go, #1574), their ids; nil when
+// all are.
 func presetAccessKey(pr provider.PresetDef) (string, []string) {
 	vendor := provider.AccessKeyVendor(provider.Provider{Chat: pr.Chat, Responses: pr.Responses, Anthropic: pr.Anthropic})
 	var ids []string
@@ -1194,10 +1196,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// ClearBalanceToken drops the saved balance token, which a
 			// blank one in the form otherwise keeps
 			ClearBalanceToken bool `json:"clearBalanceToken"`
-			// AccessKeyID is a Volcengine access key's ID or a Tencent
-			// Cloud SecretId, "" for none; a save that leaves it out keeps
-			// it. Its Secret (SecretAccessKey, a Tencent SecretKey) is kept
-			// when sent blank, unless ClearAccessKey drops it.
+			// AccessKeyID is a Volcengine access key's ID, a Tencent
+			// Cloud SecretId or an Alibaba Cloud AccessKey ID, "" for none;
+			// a save that leaves it out keeps it. Its Secret
+			// (SecretAccessKey, a Tencent SecretKey) is kept when sent
+			// blank, unless ClearAccessKey drops it.
 			AccessKeyID    *string `json:"accessKeyID"`
 			ClearAccessKey bool    `json:"clearAccessKey"`
 			// From is the id the provider had: another is a rename

@@ -23,6 +23,7 @@ package provider
 // quotaHistSame of the next one dropped for it.
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"math"
@@ -249,6 +250,15 @@ func quotaHistKey(provider, user string) string { return provider + "|" + string
 // Claude account's, kept until Claude Code tells it again) keeps its time
 // and so isn't taken for a new one.
 func noteQuotaHistory(qs []SubscriptionQuota, now time.Time) {
+	noteQuotaHistoryRead(context.Background(), qs, now)
+}
+
+// noteQuotaHistoryRead is noteQuotaHistory for a reading begun in ctx,
+// one of the plans' (PlanQuotas): a point of a reading begun before a
+// plan's settings changed is not written. The file is read here, which
+// may take a while; only the commit (publishReading) is ordered with the
+// clear, so a clear never waits on this read.
+func noteQuotaHistoryRead(ctx context.Context, qs []SubscriptionQuota, now time.Time) {
 	quotaHistMu.Lock()
 	defer quotaHistMu.Unlock()
 	path := quotaHistPath()
@@ -317,7 +327,7 @@ func noteQuotaHistory(qs []SubscriptionQuota, now time.Time) {
 		return
 	}
 	h.prune(now)
-	writeQuotaHist(h)
+	publishReading(ctx, func() { writeQuotaHist(h) })
 }
 
 // mergeQuotaHist puts b's points into a: the union of both, a point within

@@ -19,7 +19,22 @@ type cardRefreshKey struct{}
 
 type quotaReadKey struct{}
 
+type quotaGenKey struct{}
+
 var quotaReadSequence atomic.Uint64
+
+// quotaReadGeneration is bumped when what the plans are read with
+// changes: ForgetPlanQuotas, after a save that replaced or cleared an
+// access key. A read begun before it answers of what was, so it must
+// not publish what it read into a cache or a history of what is.
+var quotaReadGeneration atomic.Uint64
+
+// quotaGeneration is the generation the read went out in, when ctx says
+// (a read that quotaReading made).
+func quotaGeneration(ctx context.Context) (uint64, bool) {
+	gen, ok := ctx.Value(quotaGenKey{}).(uint64)
+	return gen, ok
+}
 
 // quotaReading orders reads when they start, not when the vendor answers.
 // A card refresh shares its order across the three kinds of usage.
@@ -31,14 +46,53 @@ func quotaReading(ctx context.Context) (context.Context, uint64) {
 		return ctx, seq
 	}
 	seq := quotaReadSequence.Add(1)
-	return context.WithValue(ctx, quotaReadKey{}, seq), seq
+	ctx = context.WithValue(ctx, quotaReadKey{}, seq)
+	return context.WithValue(ctx, quotaGenKey{}, quotaReadGeneration.Load()), seq
+}
+
+// stillCurrent says the read ctx went out in is still about what is:
+// no ForgetPlanQuotas came between. Outside publishReading it is a
+// reader's early answer only: the write itself is decided there.
+func stillCurrent(ctx context.Context) bool {
+	gen, ok := quotaGeneration(ctx)
+	return !ok || gen == quotaReadGeneration.Load()
+}
+
+// quotaPublication orders every publication of what a read read with the
+// change that invalidates it: ForgetPlanQuotas bumps the generation under
+// this mutex, and a card, a kept reading or a history point is written
+// under it after the generation is read again. So a clear either waits
+// for a write under way to finish or comes first and makes it drop — a
+// check and a write cannot straddle it. A write holds its own cache's
+// lock already and takes this one only around the state updated or the
+// file written: never across a network call or the history read.
+var quotaPublication sync.Mutex
+
+// publishReading runs commit, which updates or writes what a read read,
+// when the read ctx went out in is still current, and says whether it
+// did. commit runs under quotaPublication, so it cannot interleave with
+// ForgetPlanQuotas' generation.
+func publishReading(ctx context.Context, commit func()) bool {
+	quotaPublication.Lock()
+	defer quotaPublication.Unlock()
+	if !stillCurrent(ctx) {
+		return false
+	}
+	commit()
+	return true
 }
 
 // keepReading also orders the last good reading on disk: a late response
-// must not become the fallback for the next failed request.
+// must not become the fallback for the next failed request. A reading
+// begun before a plan's settings changed is not kept at all: it is of an
+// account or a key no longer in use. The early answer here saves the lock
+// for a reading already known stale; keepLast decides the write.
 func keepReading(ctx context.Context, q SubscriptionQuota, user string) SubscriptionQuota {
 	q.readSeq, _ = ctx.Value(quotaReadKey{}).(uint64)
-	return keepLast(q, user)
+	if !stillCurrent(ctx) {
+		return q
+	}
+	return keepLast(ctx, q, user)
 }
 
 // refreshing is the card a read is for, when it is for one card alone.

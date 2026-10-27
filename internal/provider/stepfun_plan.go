@@ -341,7 +341,15 @@ func SignOutStepFun(id string) error {
 func forgetPlanQuotas() {
 	planQuotaCache.Lock()
 	planQuotaCache.data = nil
+	// a read already out answers of what was: it publishes nothing. The
+	// generation is bumped in the publication window, so a write under
+	// way finishes before this returns and one not yet begun is dropped
+	// (publishReading); the cache lock is outer, as in PlanQuotas.
+	quotaPublication.Lock()
+	quotaReadGeneration.Add(1)
+	quotaPublication.Unlock()
 	planQuotaCache.Unlock()
+	bailianForgetTokens()
 }
 
 // errStepFunSession is a session the platform no longer takes.

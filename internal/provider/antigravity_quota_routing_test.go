@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -59,7 +60,7 @@ func TestAntigravityQuotaRoutesBaseModel(t *testing.T) {
 		lastQuotas.loaded, lastQuotas.m = false, nil
 		lastQuotas.Unlock()
 	})
-	keepLast(q, q.User)
+	keepLast(context.Background(), q, q.User)
 	lastQuotas.Lock()
 	lastQuotas.loaded, lastQuotas.m = false, nil
 	lastQuotas.Unlock()

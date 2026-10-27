@@ -9636,15 +9636,17 @@ function drawEditor(p, presetID) {
   }
 
   // Volcengine Ark tells a Coding or Agent Plan's windows only to the
-  // account's access key, never to the plan's key (#1427), and Tencent
+  // account's access key, never to the plan's key (#1427), Tencent
   // Cloud a Token Plan 企业版's only to its SecretId and SecretKey (#1574),
-  // asked only at the regions that are that plan; the saved Secret is
-  // never sent back here, only that one is saved
+  // asked only at the regions that are that plan, and Alibaba Cloud a
+  // Bailian Token Plan 个人版's only to the account's AccessKey ID and
+  // Secret (bailian_usage.go); the saved Secret is never sent back here,
+  // only that one is saved
   const access = p ? p.accessKey : pr?.accessKey ? { vendor: pr.accessKeyVendor || "volcengine", id: "", secretSet: false } : null;
   let accessAt = () => {}, accessShown = () => !!access;
   if (access) {
-    const tc = access.vendor === "tencent";
-    const idName = tc ? t("SecretId") : t("AccessKey ID"), secretName = tc ? t("SecretKey") : t("Secret Access Key");
+    const tc = access.vendor === "tencent", bl = access.vendor === "bailian";
+    const idName = tc ? t("SecretId") : t("AccessKey ID"), secretName = tc ? t("SecretKey") : bl ? t("AccessKey Secret") : t("Secret Access Key");
     if (draft.accessKeyID === undefined) draft.accessKeyID = access.id || "";
     const ak = input(draft.accessKeyID, idName);
     ak.classList.add("volc-ak");
@@ -9667,7 +9669,9 @@ function drawEditor(p, presetID) {
       ...field(idName, ak, ""),
       ...field(secretName, pair, tc
         ? t("Token Plan Enterprise's usage is told only to the Tencent Cloud account's API key (console → Access management → API keys), not to the plan's API key. Give its SecretId and SecretKey here for the Usage page to show it; a sub-user's key that may read TokenHub is enough. It is used for nothing else.")
-        : t("The plan's 5-hour, weekly and monthly windows are told only to the account's access key (Volcengine console → API Access Keys), not to the plan's API key. Give it here for the Usage page to show them; it is used for nothing else.")),
+        : bl
+          ? t("The Bailian Token Plan's monthly usage is told only to the Alibaba Cloud account's access key (RAM console → AccessKeys), not to the plan's sk- key. Give its AccessKey ID and Secret here for the Usage page to show the month's used share and credits; it must be the account the plan is subscribed on, as several sk- keys don't mean several plans. It is used for nothing else.")
+          : t("The plan's 5-hour, weekly and monthly windows are told only to the account's access key (Volcengine console → API Access Keys), not to the plan's API key. Give it here for the Usage page to show them; it is used for nothing else.")),
     ];
     ed.append(...rows);
     // a preset with the plan at some of its regions only (Tencent Cloud's
