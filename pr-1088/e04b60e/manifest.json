@@ -1,0 +1,36 @@
+{
+  "summary": "Agent 页新增 OpenClaw：未安装时在「安装其他 Agent」里给出官方安装脚本入口，检测到后以官方彩色图标出现在 Agent 列表，并在详情面板里提供「配置模型」——主模型与可排序、可清空的备用模型链，改动即时保存。",
+  "scenes": [
+    {
+      "title": "安装列表里的 OpenClaw",
+      "shots": [
+        {
+          "file": "01-openclaw-install-entry.png",
+          "caption": "展开后的安装入口列表",
+          "width": 2168
+        }
+      ]
+    },
+    {
+      "title": "Agent 列表与其余下的 Agent",
+      "shots": [
+        {
+          "file": "02-agents-rows-expanded.png",
+          "caption": "展开后的 Agent 列表与未设置的 Agent",
+          "width": 2168
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "Agent 列表与其余下的 Agent · shot #agents .list: nothing visible matches #agents .list (0 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒没有安装 OpenClaw（也没有它的配置），所以 Agent 列表中的 OpenClaw 行、它的「详情」面板与「配置模型」主模型／降级模型编辑器、上移／移除／添加降级模型、保存失败的内联错误，以及只读或 $include 配置的提示都无法展示。",
+  "interactive": true,
+  "pages": 1
+}
