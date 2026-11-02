@@ -24,6 +24,7 @@ package provider
 // quotaHistSame of the next one dropped for it.
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"math"
@@ -301,75 +302,100 @@ func quotaHistKey(provider, user string) string { return provider + "|" + string
 // Claude account's, kept until Claude Code tells it again) keeps its time
 // and so isn't taken for a new one.
 func noteQuotaHistory(qs []SubscriptionQuota, now time.Time) {
+	noteQuotaHistoryRead(context.Background(), qs, now)
+}
+
+// noteQuotaHistoryRead is noteQuotaHistory for a reading begun in ctx,
+// one of the plans' (PlanQuotas): a point of a reading begun before a
+// plan's settings changed is not written. The file is read here, which
+// may take a while; only the commit (publishReading) is ordered with the
+// clear, so a clear never waits on this read.
+func noteQuotaHistoryRead(ctx context.Context, qs []SubscriptionQuota, now time.Time) {
 	quotaHistMu.Lock()
 	defer quotaHistMu.Unlock()
 	path := quotaHistPath()
+	noted := lastNoted
 	if lastNotedPath != path {
-		// another history file: the noted times say nothing about it
-		lastNoted, lastNotedPath = map[string]time.Time{}, path
+		noted = nil // another file's noted times say nothing about this one
 	}
-	// A batch of cached readings notes nothing new: every reading's time is
-	// no newer than what was last noted for its account, so the file need
-	// not be read and parsed for that batch again (#1358).
-	skip := true
+	// A cached batch needs no history read. Keep new times private until
+	// publication too: a refused reading must not suppress a later valid one.
+	var latest map[string]time.Time
 	for _, q := range qs {
 		if q.Error != "" || q.AsOf != nil || q.Provider == "" {
-			continue // a reading kept from before isn't a new one
+			continue
 		}
 		at := now
 		if q.ReadAt != nil && !q.ReadAt.After(now) {
 			at = *q.ReadAt
 		}
 		key := quotaHistKey(q.Provider, q.User)
-		if lastNoted[key].Before(at) {
-			lastNoted[key] = at
-			skip = false
+		if noted[key].Before(at) {
+			if latest == nil {
+				latest = map[string]time.Time{}
+			}
+			if latest[key].Before(at) {
+				latest[key] = at
+			}
 		}
 	}
-	if skip {
+	if len(latest) == 0 {
 		return
 	}
-	var h quotaHist
-	changed := false
+	type pointUpdate struct {
+		account, window string
+		point           QuotaPoint
+	}
+	var updates []pointUpdate
 	for _, q := range qs {
 		if q.Error != "" || q.AsOf != nil || q.Provider == "" {
-			continue // a reading kept from before isn't a new one
+			continue
 		}
 		at := now
 		if q.ReadAt != nil && !q.ReadAt.After(now) {
 			at = *q.ReadAt
 		}
 		for _, w := range q.Windows {
-			p, ok := pointOf(w, at, now)
-			if !ok {
-				continue
+			if p, ok := pointOf(w, at, now); ok {
+				updates = append(updates, pointUpdate{quotaHistKey(q.Provider, q.User), w.LineName(), p})
 			}
-			if h == nil {
-				h = heldQuotaHist()
+		}
+	}
+	var h quotaHist
+	if len(updates) > 0 {
+		// This may block on disk; ForgetPlanQuotas must remain able to advance.
+		// The returned map can be shared, so do not change it before publication.
+		h = heldQuotaHist()
+	}
+	publishReading(ctx, func() {
+		if lastNotedPath != path {
+			lastNoted, lastNotedPath = map[string]time.Time{}, path
+		}
+		for key, at := range latest {
+			lastNoted[key] = at
+		}
+		changed := false
+		for _, u := range updates {
+			if h[u.account] == nil {
+				h[u.account] = map[string][]QuotaPoint{}
 			}
-			key := quotaHistKey(q.Provider, q.User)
-			if h[key] == nil {
-				h[key] = map[string][]QuotaPoint{}
-			}
-			name := w.LineName() // Antigravity's pools each have a 5-hour window
-			before := h[key][name]
+			before := h[u.account][u.window]
 			k := len(before)
 			var last QuotaPoint
 			if k > 0 {
 				last = before[k-1]
 			}
-			after := addPoint(before, p)
+			after := addPoint(before, u.point)
 			if len(after) != k || k > 0 && after[k-1] != last {
 				changed = true
 			}
-			h[key][name] = after
+			h[u.account][u.window] = after
 		}
-	}
-	if !changed {
-		return
-	}
-	h.prune(now)
-	writeQuotaHist(h)
+		if changed {
+			h.prune(now)
+			writeQuotaHist(h)
+		}
+	})
 }
 
 // mergeQuotaHist puts b's points into a: the union of both, a point within

@@ -93,7 +93,7 @@ func TestAliPlanQuotas(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch host {
-		case "modelstudio.cn-beijing.aliyuncs.com":
+		case "modelstudio.ap-southeast-1.aliyuncs.com":
 			if r.Method != http.MethodPost || r.URL.Path != aliACSPath || r.URL.RawQuery != "" || len(body) != 0 ||
 				r.Header.Get("x-acs-action") != aliACSAction || r.Header.Get("x-acs-version") != aliACSVersion {
 				t.Errorf("mint %s %s with %q", r.Method, r.URL, body)
@@ -116,12 +116,12 @@ func TestAliPlanQuotas(t *testing.T) {
 			}
 			mints++
 			io.WriteString(w, `{"cliAccessToken":"tok2"}`)
-		case "bailian-cs.console.aliyun.com":
+		case "bailian-singapore-cs.alibabacloud.com":
 			reads++
 			q := r.URL.Query()
 			f, _ := url.ParseQuery(string(body))
-			if r.Method != http.MethodPost || r.URL.Path != "/cli/api.json" || q.Get("action") != "BroadScopeAspnGateway" || q.Get("product") != "sfm_bailian" ||
-				q.Get("api") != aliUsageAPI || f.Get("region") != "cn-beijing" || !strings.Contains(f.Get("params"), aliUsageAPI) {
+			if r.Method != http.MethodPost || r.URL.Path != "/cli/api.json" || q.Get("action") != "IntlBroadScopeAspnGateway" || q.Get("product") != "sfm_bailian" ||
+				q.Get("api") != aliUsageAPI || f.Get("region") != "ap-southeast-1" || !strings.Contains(f.Get("params"), aliUsageAPI) {
 				t.Errorf("usage %s %s with %q", r.Method, r.URL, body)
 			}
 			// the first token is refused once: the reader makes another
@@ -144,19 +144,19 @@ func TestAliPlanQuotas(t *testing.T) {
 	t.Cleanup(func() { http.DefaultClient.Transport = old })
 	aliTokensMu.Lock()
 	// a token kept from before, which the console no longer takes
-	aliTokens = map[string]aliToken{"AK1 cn-beijing": {"tok1", time.Now()}}
+	aliTokens = map[string]aliToken{"AK1 ap-southeast-1": {"tok1", time.Now()}}
 	aliTokensMu.Unlock()
 	forgetPlanQuotas()
 	t.Cleanup(forgetPlanQuotas)
 
-	const cn = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+	const cn = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
 	for _, p := range []Provider{
 		{ID: "bailian-token-plan", Name: "Bailian Token Plan", Chat: cn, Key: "sk-sp-key", AccessKeyID: "AK1", SecretAccessKey: "SK1"},
 		// the same access key: one card
 		{ID: "bailian-copy", Name: "Bailian copy", Chat: cn, Key: "sk-sp-key", AccessKeyID: "AK1", SecretAccessKey: "SK1"},
 		{ID: "bailian-bad", Name: "Bailian bad", Chat: cn, Key: "sk-sp-key", AccessKeyID: "AKbad", SecretAccessKey: "SKbad"},
 		// no access key for the Singapore region: a card that asks for it
-		{ID: "alibaba-token-plan", Name: "Alibaba Cloud Token Plan", Preset: "alibaba-token-plan", Chat: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", Key: "sk-sp-key"},
+		{ID: "alibaba-token-plan", Name: "Bailian Token Plan", Preset: "bailian-token-plan", Chat: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", Key: "sk-sp-key"},
 		// not a plan's host
 		{ID: "qwen", Name: "Qwen", Chat: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", Key: "sk-x", AccessKeyID: "AK1", SecretAccessKey: "SK1"},
 	} {
