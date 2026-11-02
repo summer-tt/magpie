@@ -6,6 +6,7 @@ package provider
 // A reading that comes back replaces it at once.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -57,8 +58,11 @@ func keyTag(kind, key string) string {
 }
 
 // keepLast is q, or the last reading of its account when q failed in
-// passing; a good reading is kept for next time.
-func keepLast(q SubscriptionQuota, user string) SubscriptionQuota {
+// passing; a good reading is kept for next time. One begun before a
+// plan's settings changed (ctx from quotaReading) is neither kept nor
+// handed back: its write is made in the publication window
+// (publishReading), so a clear either waits for it or makes it drop.
+func keepLast(ctx context.Context, q SubscriptionQuota, user string) SubscriptionQuota {
 	if user == "" {
 		user = q.User
 	}
@@ -70,6 +74,18 @@ func keepLast(q SubscriptionQuota, user string) SubscriptionQuota {
 	c.Lock()
 	defer c.Unlock()
 	c.load()
+	out := q
+	if !publishReading(ctx, func() { out = keepLastLocked(c, q, key) }) {
+		return q
+	}
+	return out
+}
+
+// keepLastLocked is keepLast's decision, with lastQuotas held and the
+// publication window open: what it keeps is written before a clear can
+// bump the generation, and what it hands back is what it just read or
+// the same key's last reading.
+func keepLastLocked(c *lastQuotasT, q SubscriptionQuota, key string) SubscriptionQuota {
 	if q.Error == "" {
 		if kept := c.m[key].Q; q.readSeq != 0 && kept.readSeq > q.readSeq {
 			kept.Name, kept.Icon, kept.User = q.Name, q.Icon, q.User
@@ -171,10 +187,12 @@ func (c *lastQuotasT) reading(key string) (SubscriptionQuota, bool) {
 	out, ok := c.reported(key)
 	if ok {
 		now := time.Now()
-		if holdEnded(out, time.Time{}, now) {
-			out.Held = false
+		if !planOver(out, now) {
+			if holdEnded(out, time.Time{}, now) {
+				out.Held = false
+			}
+			out.Windows = elapsed(out.Windows, now)
 		}
-		out.Windows = elapsed(out.Windows, now)
 	}
 	return out, ok
 }
@@ -187,6 +205,13 @@ func (c *lastQuotasT) reading(key string) (SubscriptionQuota, bool) {
 // vendor gave it, every window as it was then.
 func holdEnded(q SubscriptionQuota, read, now time.Time) bool {
 	return q.Held && usedUp(q, read) && !usedUp(q, now)
+}
+
+// planOver says the plan a card is of has ended and will not renew
+// (Until, with Renew "off"): the month it counted is not followed by
+// another, so its windows are not taken to have started again.
+func planOver(q SubscriptionQuota, now time.Time) bool {
+	return q.Renew == "off" && q.Until != nil && !now.Before(*q.Until)
 }
 
 // reported is the dated snapshot, without treating a passed reset as a

@@ -68,13 +68,13 @@ type Provider struct {
 
 	// AccessKeyID and SecretAccessKey are a Volcengine account's access
 	// key (TakesVolcAccessKey), what Ark tells its Coding or Agent Plan's
-	// windows to (volcengine_usage.go), or a Tencent Cloud account's API
+	// windows to (volcengine_usage.go), a Tencent Cloud account's API
 	// key, its SecretId and SecretKey (TakesTencentAccessKey), what TokenHub
 	// tells Token Plan 企业版's usage to (tencent_usage.go), or an Alibaba
 	// Cloud account's AccessKey ID and Secret (TakesAlibabaAccessKey), what
-	// its console tells a Token Plan's usage to (alibaba_usage.go); not the plan's
-	// inference key in Key. On Amazon Bedrock they are an AWS access key,
-	// which signs its requests (SigV4) in place of a Bedrock API key
+	// its console tells a Token Plan's usage to (alibaba_usage.go, bailian_usage.go);
+	// not the plan's inference key in Key. On Amazon Bedrock they are an AWS
+	// access key, which signs its requests (SigV4) in place of a Bedrock API key
 	// (SignsWithAccessKey, #7687), with SessionToken a temporary one's.
 	// They are kept, backed up and synced as the keys are: the Secret and
 	// the token are never sent to the GUI, and a backup without keys has none.

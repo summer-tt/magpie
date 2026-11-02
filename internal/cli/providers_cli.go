@@ -1289,8 +1289,9 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			// a Volcengine account's access key, which Ark tells its
 			// Coding or Agent Plan's windows to (#1427), a Tencent Cloud
 			// SecretId, which TokenHub tells Token Plan 企业版's usage to
-			// (#1574), or an AWS access key, which signs Bedrock's
-			// requests (#7687)
+			// (#1574), an Alibaba Cloud AccessKey ID, which Bailian tells
+			// Token Plan 个人版's usage to, or an AWS access key, which signs
+			// Bedrock's requests (#7687).
 			p.AccessKeyID = v
 		case "access.secret":
 			p.SecretAccessKey = v

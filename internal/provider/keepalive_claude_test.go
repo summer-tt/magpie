@@ -242,7 +242,7 @@ func TestRenewLoginsKeepsClaudeReading(t *testing.T) {
 	lastQuotas.Lock()
 	lastQuotas.m, lastQuotas.loaded = nil, false
 	lastQuotas.Unlock()
-	q := keepLast(SubscriptionQuota{Provider: "claude", Windows: []QuotaWindow{}, Error: errClaudeSaved.Error()}, max)
+	q := keepLast(context.Background(), SubscriptionQuota{Provider: "claude", Windows: []QuotaWindow{}, Error: errClaudeSaved.Error()}, max)
 	if used(q.Windows) != 37 {
 		t.Fatalf("kept on disk: %+v", q)
 	}

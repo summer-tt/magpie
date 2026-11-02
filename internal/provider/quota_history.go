@@ -24,6 +24,7 @@ package provider
 // quotaHistSame of the next one dropped for it.
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"math"
@@ -303,93 +304,125 @@ func quotaHistKey(provider, user string) string { return provider + "|" + string
 // (quota_stale.go) isn't kept, and its card in qs is set to the later
 // window, so call it before the cards are cached.
 func noteQuotaHistory(qs []SubscriptionQuota, now time.Time) {
+	noteQuotaHistoryRead(context.Background(), qs, now)
+}
+
+// noteQuotaHistoryRead is noteQuotaHistory for a reading begun in ctx,
+// one of the plans' (PlanQuotas): a point of a reading begun before a
+// plan's settings changed is not written. The file is read here, which
+// may take a while; only the commit (publishReading) is ordered with the
+// clear, so a clear never waits on this read.
+func noteQuotaHistoryRead(ctx context.Context, qs []SubscriptionQuota, now time.Time) {
 	quotaHistMu.Lock()
 	defer quotaHistMu.Unlock()
 	path := quotaHistPath()
+	noted := lastNoted
 	if lastNotedPath != path {
-		// another history file: the noted times say nothing about it
-		lastNoted, lastNotedPath = map[string]time.Time{}, path
+		noted = nil // another file's noted times say nothing about this one
 	}
-	// A batch of cached readings notes nothing new: every reading's time is
-	// no newer than what was last noted for its account, so the file need
-	// not be read and parsed for that batch again (#1358).
-	skip := true
+	// A cached batch needs no history read. Keep new times private until
+	// publication too: a refused reading must not suppress a later valid one.
+	var latest map[string]time.Time
 	for _, q := range qs {
 		if q.Error != "" || q.AsOf != nil || q.Provider == "" {
-			continue // a reading kept from before isn't a new one
+			continue
 		}
 		at := now
 		if q.ReadAt != nil && !q.ReadAt.After(now) {
 			at = *q.ReadAt
 		}
 		key := quotaHistKey(q.Provider, q.User)
-		if lastNoted[key].Before(at) {
-			lastNoted[key] = at
-			skip = false
+		if noted[key].Before(at) {
+			if latest == nil {
+				latest = map[string]time.Time{}
+			}
+			if latest[key].Before(at) {
+				latest[key] = at
+			}
 		}
 	}
-	if skip {
+	if len(latest) == 0 {
 		return
 	}
 	var h quotaHist
-	changed := false
-	for i, q := range qs {
+readHistory:
+	for _, q := range qs {
 		if q.Error != "" || q.AsOf != nil || q.Provider == "" {
-			continue // a reading kept from before isn't a new one
+			continue
 		}
 		at := now
 		if q.ReadAt != nil && !q.ReadAt.After(now) {
 			at = *q.ReadAt
 		}
-		var current []QuotaWindow // q's windows, a stale replica's as the later window (quota_stale.go)
-		for j, w := range q.Windows {
-			p, ok := pointOf(w, at, now)
-			if !ok {
-				continue
-			}
-			if h == nil {
+		for _, w := range q.Windows {
+			if _, ok := pointOf(w, at, now); ok {
 				h = heldQuotaHist()
+				break readHistory
 			}
-			key := quotaHistKey(q.Provider, q.User)
-			if h[key] == nil {
-				h[key] = map[string][]QuotaPoint{}
+		}
+	}
+	publishReading(ctx, func() {
+		if lastNotedPath != path {
+			lastNoted, lastNotedPath = map[string]time.Time{}, path
+		}
+		for key, at := range latest {
+			lastNoted[key] = at
+		}
+		changed := false
+		for i, q := range qs {
+			if q.Error != "" || q.AsOf != nil || q.Provider == "" {
+				continue // a reading kept from before isn't a new one
 			}
-			name := w.LineName() // Antigravity's pools each have a 5-hour window
-			before := h[key][name]
-			if kept := withoutStale(q.Provider, before); staleWindowVendors[q.Provider] && len(kept) > 0 {
-				if cw, stale := currentWindow(w, p, kept[len(kept)-1]); stale {
-					if current == nil {
-						current = slices.Clone(q.Windows)
-					}
-					current[j] = cw
-					for m, f := range q.Windows {
-						if sameBucket(f, w) {
-							current[m].Used, current[m].ResetsAt, current[m].ResetSecs, current[m].StartsAt = cw.Used, cw.ResetsAt, 0, nil
-						}
-					}
-					continue // not kept: a window already replaced
+			at := now
+			if q.ReadAt != nil && !q.ReadAt.After(now) {
+				at = *q.ReadAt
+			}
+			var current []QuotaWindow // q's windows, a stale replica's as the later window (quota_stale.go)
+			for j, w := range q.Windows {
+				p, ok := pointOf(w, at, now)
+				if !ok {
+					continue
 				}
+				key := quotaHistKey(q.Provider, q.User)
+				if h[key] == nil {
+					h[key] = map[string][]QuotaPoint{}
+				}
+				name := w.LineName() // Antigravity's pools each have a 5-hour window
+				before := h[key][name]
+				if kept := withoutStale(q.Provider, before); staleWindowVendors[q.Provider] && len(kept) > 0 {
+					if cw, stale := currentWindow(w, p, kept[len(kept)-1]); stale {
+						if current == nil {
+							current = slices.Clone(q.Windows)
+						}
+						current[j] = cw
+						for m, f := range q.Windows {
+							if sameBucket(f, w) {
+								current[m].Used, current[m].ResetsAt, current[m].ResetSecs, current[m].StartsAt = cw.Used, cw.ResetsAt, 0, nil
+							}
+						}
+						continue // not kept: a window already replaced
+					}
+				}
+				k := len(before)
+				var last QuotaPoint
+				if k > 0 {
+					last = before[k-1]
+				}
+				after := addPoint(before, p)
+				if len(after) != k || k > 0 && after[k-1] != last {
+					changed = true
+				}
+				h[key][name] = after
 			}
-			k := len(before)
-			var last QuotaPoint
-			if k > 0 {
-				last = before[k-1]
+			if current != nil {
+				qs[i].Windows = current
 			}
-			after := addPoint(before, p)
-			if len(after) != k || k > 0 && after[k-1] != last {
-				changed = true
-			}
-			h[key][name] = after
 		}
-		if current != nil {
-			qs[i].Windows = current
+		if changed {
+			h.prune(now)
+			writeQuotaHist(h)
 		}
-	}
-	if !changed {
-		return
-	}
-	h.prune(now)
-	writeQuotaHist(h)
+	})
 }
 
 // mergeQuotaHist puts b's points into a: the union of both, a point within
