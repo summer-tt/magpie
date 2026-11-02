@@ -89,7 +89,7 @@ while read -r line; do
     esac
     continue ;;
   esac
-  echo "told $line" >> $log
+  printf 'told %s\n' "$line" >> $log
   if [ -n "$file" ]; then printf '%s\n' "$line" >> "$file"; fi
   echo '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m","model":"claude-sonnet-5","usage":{"input_tokens":1}}}}'
   echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + strconv.Quote(reply) + `}}}'

@@ -291,7 +291,29 @@ func TestClaudeClientCacheAbsentUnchanged(t *testing.T) {
 		if !strings.Contains(log, "cache-disabled 0") || strings.Contains(log, "apply_flag_settings") {
 			t.Fatalf("ordinary environment/settings changed: %s", log)
 		}
-		if !strings.Contains(log, "\"cache_control\":{\"ttl\":\"1h\",\"type\":\"ephemeral\"},\"text\":\"\\u003cexternal_system_instructions\\u003e\nshared\n\\u003c/external_system_instructions\\u003e\n\n\"") {
+		var found bool
+		for _, line := range strings.Split(log, "\n") {
+			if !strings.HasPrefix(line, "told ") {
+				continue
+			}
+			var msg struct {
+				Message struct {
+					Content []struct {
+						Text         string            `json:"text"`
+						CacheControl map[string]string `json:"cache_control"`
+					} `json:"content"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "told ")), &msg); err != nil {
+				t.Fatalf("invalid prompt JSON: %v", err)
+			}
+			for _, block := range msg.Message.Content {
+				if block.Text == "<external_system_instructions>\nshared\n</external_system_instructions>\n\n" && len(block.CacheControl) == 2 && block.CacheControl["type"] == "ephemeral" && block.CacheControl["ttl"] == "1h" {
+					found = true
+				}
+			}
+		}
+		if !found {
 			t.Fatalf("ordinary prompt changed: %s", log)
 		}
 	}
