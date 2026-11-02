@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/usage"
@@ -129,6 +130,13 @@ func (s *Server) askOwnSearch(ctx context.Context, p provider.Provider, where, q
 
 // kimiSearch asks a Kimi Code plan's search service.
 func (s *Server) kimiSearch(ctx context.Context, p provider.Provider, query string) (string, []Hit, error) {
+	// A search service has no model, but still spends an eligible account.
+	// Preserve an inherited qualified selection and the caller's account limits.
+	selected, ok := allowedKey(access.Caller(ctx), p, "")
+	if !ok {
+		return "", nil, fmt.Errorf("%s: no account is available for web search", p.ID)
+	}
+	p = selected
 	// the service gives itself 30 s, as kimi-cli asks
 	// through the plan's own proxy, if it has one (#237, #1522)
 	ctx, cancel := context.WithTimeout(s.metered(p.Via(ctx), p, ""), searchTimeout/2)
@@ -149,7 +157,10 @@ func (s *Server) kimiSearch(ctx context.Context, p provider.Provider, query stri
 	if id, _ := ctx.Value(searchCallKey{}).(string); id != "" {
 		r.Header.Set("X-Msh-Tool-Call-Id", id)
 	}
-	res, err := s.client.Do(r)
+	if !p.RoutingCurrent() {
+		return "", nil, fmt.Errorf("%s: routing account is no longer available for web search", p.ID)
+	}
+	res, err := s.client.Do(routingRequest(r, p))
 	res = tapSearch(ctx, r, body, res)
 	if err != nil {
 		if ctx.Err() != nil {

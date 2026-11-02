@@ -51,7 +51,11 @@ func Restore(ps []Provider) (added, replaced int, err error) {
 		}
 		keepSelf := f.Providers[i].KeepSelf // this computer's own (Mirror)
 		keepThis := f.Providers[i].ThisDevice
-		f.Providers[i] = KeepSecrets(p, f.Providers[i], p.Key == "" && len(p.Keys) == 0)
+		next := KeepSecrets(p, f.Providers[i], p.Key == "" && len(p.Keys) == 0)
+		if err := mergeRoutingHistory(&next, f.Providers[i]); err != nil {
+			return 0, 0, err
+		}
+		f.Providers[i] = next
 		f.Providers[i].KeepSelf = keepSelf
 		f.Providers[i].ThisDevice = f.Providers[i].ThisDevice || keepThis // a restore doesn't send it away
 		replaced++
@@ -136,6 +140,9 @@ func mirror(ps []Provider, gs []Group, settingsHere bool) error {
 		}
 		if h, ok := here[p.ID]; ok {
 			p = KeepSecrets(p, h, p.Key == "" && len(p.Keys) == 0)
+			if err := mergeRoutingHistory(&p, h); err != nil {
+				return err
+			}
 			p.KeepLogin, p.KeepLoginAs, p.SwitchOnly, p.RestartApp = h.KeepLogin, h.KeepLoginAs, h.SwitchOnly, h.RestartApp
 			p.KeepSelf = h.KeepSelf
 			if settingsHere {

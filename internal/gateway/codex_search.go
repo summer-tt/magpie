@@ -76,6 +76,11 @@ func (s *Server) alphaSearchBody(w http.ResponseWriter, r *http.Request, body []
 		writeError(w, provider.Responses, http.StatusBadRequest, "the web search request names no model")
 		return
 	}
+	var routeOK bool
+	r, routeOK = constrainRouting(w, r, provider.Responses, body)
+	if !routeOK {
+		return
+	}
 	note := ""
 	if ons, model := chatGPTSearchers(r, q.Model); len(ons) > 0 {
 		ts := make([]searchTarget, len(ons))
@@ -88,6 +93,10 @@ func (s *Server) alphaSearchBody(w http.ResponseWriter, r *http.Request, body []
 		}
 		// a failure would end the turn: magpie searches in its place
 		log.Printf("web search on ChatGPT for %s: %s", q.Model, why)
+		if constrainedRef(r) != "" {
+			writeError(w, provider.Responses, http.StatusBadGateway, why)
+			return
+		}
 		note = "ChatGPT's web search failed (" + why + "); magpie searched in its place.\n\n"
 	} else if ts := s.relaySearchers(r, q.Model); len(ts) > 0 {
 		answered, why := s.alphaSearchOn(w, r, body, ts)
@@ -96,6 +105,10 @@ func (s *Server) alphaSearchBody(w http.ResponseWriter, r *http.Request, body []
 		}
 		log.Printf("web search on %s for %s: %s", ts[0].p.Name, q.Model, why)
 		note = ts[0].p.Name + "'s web search failed (" + why + "); magpie searched in its place.\n\n"
+	}
+	if constrainedRef(r) != "" {
+		writeError(w, provider.Responses, http.StatusNotFound, "qualified model has no available account for web search")
+		return
 	}
 	s.alphaSearchHere(w, r, q, note)
 }
@@ -189,7 +202,7 @@ func chatGPTSearchers(r *http.Request, model string) ([]provider.Provider, strin
 	var ready, later []provider.Provider
 	for _, o := range all {
 		c := candidate{p: o, model: bare, rest: o.ID}
-		if !accountAllowed(who, c) {
+		if !p.RoutingAllows(o.RoutingID()) || !accountAllowed(who, c) {
 			continue
 		}
 		if resting(c) || provider.SignInMarked(o.Account) {
@@ -229,6 +242,10 @@ func (s *Server) alphaSearchAsked(w http.ResponseWriter, r *http.Request, body [
 	var errs []string
 	for _, t := range ts {
 		on, model := t.p, t.model
+		if !on.RoutingCurrent() {
+			errs = append(errs, "routing account is no longer available")
+			continue
+		}
 		who := on.Name + ": "
 		if on.Account != nil {
 			who = "OpenAI (" + on.Account.User + "): "
@@ -263,7 +280,7 @@ func (s *Server) alphaSearchAsked(w http.ResponseWriter, r *http.Request, body [
 			errs = append(errs, who+why)
 			continue
 		}
-		res, err := s.client.Do(req)
+		res, err := s.client.Do(routingRequest(req, on))
 		if err != nil {
 			if r.Context().Err() != nil {
 				return true, ""
@@ -277,6 +294,15 @@ func (s *Server) alphaSearchAsked(w http.ResponseWriter, r *http.Request, body [
 		if res.StatusCode < 200 || res.StatusCode > 299 {
 			msg, _ := io.ReadAll(io.LimitReader(res.Body, 4<<10))
 			res.Body.Close()
+			if on.RoutingAlias() != "" {
+				if retry := res.Header.Get("Retry-After"); retry != "" {
+					w.Header().Set("Retry-After", retry)
+				}
+				writeError(w, provider.Responses, res.StatusCode, vendorMessage(msg))
+				c.Millis, c.Error = time.Since(start).Milliseconds(), res.Status
+				s.record(c)
+				return true, ""
+			}
 			errs = append(errs, who+res.Status+": "+strings.TrimSpace(string(msg)))
 			c.Millis, c.Error = time.Since(start).Milliseconds(), res.Status
 			s.record(c)

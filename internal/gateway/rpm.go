@@ -158,7 +158,16 @@ func (l *rpms) giveBack(who string, at time.Time) {
 // the wait would be longer than longest, or ctx's error when ctx ended
 // first, its time given back. A limit of 0 counts nothing.
 func (l *rpms) wait(ctx context.Context, who string, limit int, longest time.Duration) (time.Duration, error) {
+	return l.waitBeforeSend(ctx, who, limit, longest, nil)
+}
+
+// waitBeforeSend rechecks a generation after its reservation becomes usable.
+// A rejected request returns its unused place just like a canceled waiter.
+func (l *rpms) waitBeforeSend(ctx context.Context, who string, limit int, longest time.Duration, beforeSend func() error) (time.Duration, error) {
 	if limit <= 0 {
+		if beforeSend != nil {
+			return 0, beforeSend()
+		}
 		return 0, nil
 	}
 	now := rpmNow()
@@ -166,16 +175,25 @@ func (l *rpms) wait(ctx context.Context, who string, limit int, longest time.Dur
 	if err != nil {
 		return 0, err
 	}
+	check := func() error {
+		if beforeSend != nil {
+			if err := beforeSend(); err != nil {
+				l.giveBack(who, at)
+				return err
+			}
+		}
+		return nil
+	}
 	d := at.Sub(now)
 	if d <= 0 {
-		return 0, nil
+		return 0, check()
 	}
 	defer notePhase(ctx, "rpm")()
 	c, stop := rpmTimer(d)
 	defer stop()
 	select {
 	case <-c:
-		return d, nil
+		return d, check()
 	case <-ctx.Done():
 		// the wait ends before its place is given back, so once the place
 		// is back nothing is left to send it
@@ -274,17 +292,27 @@ func (s *Server) paidFor(ctx context.Context, p provider.Provider, who string) c
 type rpmTransport struct{ next http.RoundTripper }
 
 func (t rpmTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	var check func() error
+	if p, ok := r.Context().Value(routingSendKey{}).(provider.Provider); ok {
+		check = func() error { return routingSendError(p) }
+	}
+	var err error
 	if tk, ok := r.Context().Value(rpmKey{}).(*rpmTicket); ok && !tk.paid.CompareAndSwap(true, false) {
-		if _, err := tk.l.wait(r.Context(), tk.who, tk.limit, tk.longest); err != nil {
-			if r.Body != nil {
-				r.Body.Close()
-			}
+		_, err = tk.l.waitBeforeSend(r.Context(), tk.who, tk.limit, tk.longest, check)
+		if err != nil {
 			var e *errRPM
 			if errors.As(err, &e) {
-				return nil, fmt.Errorf("%s: %w", tk.who, err)
+				err = fmt.Errorf("%s: %w", tk.who, err)
 			}
-			return nil, err
 		}
+	} else if check != nil {
+		err = check()
+	}
+	if err != nil {
+		if r.Body != nil {
+			r.Body.Close()
+		}
+		return nil, err
 	}
 	// its headers, both ways, for the call it is for (wire_headers.go)
 	done := upstreamBegins(r, "")

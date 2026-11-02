@@ -112,6 +112,13 @@ func Restore(ctx context.Context) ([]string, error) {
 			}
 			brought = append(brought, p)
 		}
+		var signInProviders []provider.Provider
+		if c.SignIns && slices.Contains(brought, "providers") {
+			signInProviders = remote.Providers
+			if err := provider.CheckSignInsRouting(remote.SignIns, signInProviders); err != nil {
+				return fmt.Errorf("bringing in the sign-ins: %w", err)
+			}
+		}
 		st := loadState()
 		if st.Key != stateKey(c) {
 			st = state{Key: stateKey(c), Brought: st.Brought, Replaced: st.Replaced, Own: st.Own, Here: st.Here, Settings: st.Settings}
@@ -147,7 +154,7 @@ func Restore(ctx context.Context) ([]string, error) {
 		// nothing renewed later here written over
 		// (those of the subscriptions left out here aren't)
 		if theirs, _ := remote.SignIns.Except(c.SignInsExcept); c.SignIns && theirs != nil {
-			if _, err := provider.RestoreSignIns(theirs); err != nil {
+			if _, err := provider.RestoreSignIns(theirs, signInProviders...); err != nil {
 				return fmt.Errorf("bringing in the sign-ins: %w", err)
 			}
 			if local, err = collect(c); err != nil {
