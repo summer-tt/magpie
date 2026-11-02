@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestQuotaDeferredReadIsNotFailure(t *testing.T) {
 	at := time.Now().Add(-time.Hour).Truncate(time.Second)
 	good := SubscriptionQuota{Provider: "claude", User: "saved@example.com", ReadAt: &at,
 		Windows: []QuotaWindow{{Name: "7 days", Used: 32}}}
-	keepLast(good, "")
+	keepLast(context.Background(), good, "")
 	clear() // as after an app restart
 	deferred := func(v any) bool {
 		b, err := json.Marshal(v)
@@ -48,7 +49,7 @@ func TestQuotaDeferredReadIsNotFailure(t *testing.T) {
 		{"network", "connection refused", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			q := keepLast(SubscriptionQuota{Provider: good.Provider, User: good.User, Error: tc.err}, "")
+			q := keepLast(context.Background(), SubscriptionQuota{Provider: good.Provider, User: good.User, Error: tc.err}, "")
 			if q.Error != "" || q.AsOf == nil || q.ReadAt == nil || !q.ReadAt.Equal(at) || len(q.Windows) != 1 || q.Windows[0].Used != 32 {
 				t.Fatalf("cached reading lost its values or time: %+v", q)
 			}
@@ -61,10 +62,10 @@ func TestQuotaDeferredReadIsNotFailure(t *testing.T) {
 			}
 		})
 	}
-	if q := keepLast(SubscriptionQuota{Provider: good.Provider, User: good.User, Error: "401 unauthorized"}, ""); q.Error == "" || deferred(q) {
+	if q := keepLast(context.Background(), SubscriptionQuota{Provider: good.Provider, User: good.User, Error: "401 unauthorized"}, ""); q.Error == "" || deferred(q) {
 		t.Fatalf("an account refusal was hidden as a deferred read: %+v", q)
 	}
-	if q := keepLast(good, ""); q.AsOf != nil || deferred(q) {
+	if q := keepLast(context.Background(), good, ""); q.AsOf != nil || deferred(q) {
 		t.Fatalf("a successful reading is still deferred: %+v", q)
 	}
 }
