@@ -195,9 +195,15 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const page = await context.newPage();
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
+      // a platform whose webview morphs: the Linux app deliberately has no
+      // transition (covered below), and this host is Linux
+      await page.addInitScript(() => {
+        Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" });
+      });
       await page.route("**/*", serve("en"));
       await page.goto("http://magpie.test/");
       await page.waitForSelector("#nav button.on");
+      assert.equal(await page.evaluate(() => document.body.classList.contains("linux")), false, "a platform that morphs");
       assert.ok(await page.evaluate(() => !!document.startViewTransition), "the webview has view transitions");
       // what plays, read as the button is clicked: the old drawn, the new laid out
       const playing = () => page.evaluate(() => new Promise((r) => {
@@ -285,6 +291,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
       await page.addInitScript(() => {
+        // the fallback belongs to a webview that morphs; the Linux app has
+        // no transition to cut short
+        Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" });
         window.skipped = 0;
         Document.prototype.startViewTransition = function (change) {
           let done;
@@ -296,6 +305,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.route("**/*", serve("en"));
       await page.goto("http://magpie.test/");
       await page.waitForSelector("#nav button.on");
+      assert.equal(await page.evaluate(() => document.body.classList.contains("linux")), false, "a platform that morphs");
       const t0 = Date.now();
       await page.locator("#sideToggle").click();
       await page.waitForFunction(() => document.documentElement.classList.contains("nav-morph"));
