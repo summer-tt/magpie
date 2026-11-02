@@ -547,7 +547,10 @@ func (s *Server) postDecideSent(ctx context.Context, p provider.Provider, model 
 	if err := p.Sign(ctx, req, provider.Chat, body); err != nil {
 		return decided{}, err
 	}
-	res, err := p.Do(s.client, req)
+	if !p.RoutingCurrent() {
+		return decided{}, fmt.Errorf("routing account is no longer available for %s", p.ModelRef(model))
+	}
+	res, err := p.Do(s.client, routingRequest(req, p))
 	if err != nil {
 		return decided{sent: req, body: body}, fmt.Errorf("%s: %v", p.Name, err)
 	}

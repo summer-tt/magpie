@@ -10122,8 +10122,7 @@ function drawEditor(p, presetID) {
     if (draft.decide === undefined) draft.decide = p?.decide || pr?.decide || "";
     const du = input((address && movedURLs(draft)?.decide) || draft.decide, pr?.decide || "https://…", "url");
     du.classList.add("decide-url");
-    // Bailian's is at the host of the key's workspace (#647): its id is
-    // typed on its own, the plan's address filled in with it
+    // Fill Bailian's host with the separately entered workspace ID (#647).
     if (!draft.region && pr?.regions?.some((r) => r.decide)) draft.region = (pr.regions.find((r) => r.decide && workspaceOf(r.decide, draft.decide) !== null) || pr.regions[0]).id;
     const tmpl = () => (pr?.regions || []).find((r) => r.id === draft.region)?.decide || (draft.region ? "" : pr?.decide) || "";
     const wsIn = input((draft.workspace ?? workspaceOf(tmpl(), draft.decide)) || "", t("e.g. ws-…, from the Bailian console"));
@@ -13388,7 +13387,7 @@ function keptLogin(p) {
 // kept signed in to one of the user's choosing (p given), when the order
 // is the accounts' own
 function loginsInOrder(a, p) {
-  const ls = a.logins?.length ? [...a.logins] : [{ user: a.user, plan: a.plan, active: true, on: true }];
+  const ls = a.logins?.length ? [...a.logins] : [{ id: a.id, routingAlias: a.routingAlias, user: a.user, plan: a.plan, active: true, on: true }];
   if (p && keptLogin(p)) return ls;
   return ls.sort((x, y) => (y.active ? 1 : 0) - (x.active ? 1 : 0));
 }
@@ -13474,10 +13473,9 @@ function renderAccounts(a, p) {
       dot.title = on ? t("Stop using this account") : t("Use this account too");
       dot.onclick = () => accountAction("login/" + (on ? "off" : "on"), { agent: a.agent, user: l.user });
     }
-    // one line, First or Make first at its right end (the owner, 10-29)
-    const line = el("div", "acc-line");
+    const line = el("div", "acc-line"+(l.routingAlias?" alias":""));
     row.append(line);
-    line.append(dot, accountNameButton(p, l.user), planChip(accountPlan({ agent: a.agent, builtin: a.builtin, plan: l.plan })));
+    line.append(dot, accountNameButton(p, l.user), routingAliasButton(p, l), planChip(accountPlan({ agent: a.agent, builtin: a.builtin, plan: l.plan })));
     if (p && on && several) line.append(keyWeight(p, { name: l.user }, wOf(l), weights, "provider/accountweight", { id: p.id, account: l.user }));
     // its own models (#474), when there is another account to send the rest to
     const [amPill, amBox] = ls.length > 1 || accountModelsOf(p, l.user).length ? accountModels(p, l.user, false, l.user) : [];
@@ -14215,7 +14213,8 @@ function poolLine(line, ws, q, capFor = () => 0, settable = null) {
 // An account's usage cap (provider.AccountCaps): the share of each window
 // it is used to at most; past it routing goes on to the others.
 const CAP_SHARES = [50, 60, 70, 80, 90];
-// an account's own name (provider.AccountNames, #1515); accountUserOf, its plugin usage's (#4416)
+// AccountNames is display metadata, never a sign-in (#1515). accountSeatOf
+// names its key-plan seat; accountUserOf names its plugin usage (#4416).
 function acctIn(m, user) { return m?.[String(user).toLowerCase()] || ""; }
 function accountNameOf(p, user) { return acctIn(p?.accountNames, user); }
 function accountSeatOf(p, user) { return acctIn(p?.accountSeats, user); }
@@ -14260,6 +14259,49 @@ function accountNameButton(p, user) {
     wrap.append(s);
   }
   wrap.append(hideAccounts.eye(user, p.id));
+  return wrap;
+}
+function routingAliasButton(p, a, key = false) {
+  const wrap = el("span", "acct-routing-alias" + (a.routingAlias ? " set" : "")), b = el("button", "text quiet", a.routingAlias ? "@" + a.routingAlias : t("Routing alias"));
+  b.setAttribute("aria-label", t("Routing alias"));
+  b.title = t("Without an alias this account joins ordinary routing. With an alias use provider/model@alias. Clearing it restores ordinary routing; old references fail.");
+  b.onclick = (e) => {
+    e.stopPropagation();
+    const i = input(a.routingAlias || "", t("Routing alias"));
+    i.className = "rename-in"; i.maxLength = 32;
+    i.setAttribute("aria-label", t("Routing alias"));
+    let done = false;
+    i.onkeydown = (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Escape") { ev.preventDefault(); done = true; wrap.parentNode.classList.toggle("alias", !key && a.routingAlias); i.replaceWith(b); }
+      if (ev.key === "Enter" && !done) {
+        ev.preventDefault(); done = true;
+        accountAction(key ? "keys/alias" : "provider/accountalias", key ? {id:p.id,ref:a.id,alias:i.value} : {id:p.id,account:a.id,alias:i.value}).then((saved) => { if (!saved) done = false; });
+      }
+    };
+    wrap.parentNode.classList.toggle("alias",!key); b.replaceWith(i); i.focus({preventScroll:true});
+  };
+  wrap.append(b);
+  if (a.routingAlias) {
+    const allowed = accountModelsOf(p, key ? a.id : a.user);
+    const refs = p.routingModels ? (p.routingModels[a.id] || []) : (p.models || []).filter((m) => m.on && !m.noAPI && (!allowed.length || allowed.includes(m.id))).map((m) => `${p.id}/${m.id}@${a.routingAlias}`);
+    const cp = el("button", "copy");
+    cp.title = t("Copy model reference"); cp.setAttribute("aria-label", cp.title);
+    cp.append(svg(COPY_ICON, 12, 1.5)); cp.disabled = !refs.length;
+    const put = async (ref) => {
+      let copied = false;
+      try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(ref); copied = true; } } catch {}
+      if (!copied) copied = copyByCommand(ref);
+      if (copied) { flashCopied(cp); status(t("{what} copied", {what:t("Model")}), "ok"); }
+      else status(t("Couldn't copy. Select it here and copy it yourself: {text}", {text:ref}), "err");
+    };
+    cp.onclick = (e) => {
+      e.stopPropagation();
+      if (refs.length === 1) put(refs[0]);
+      else openProtoMenu(cp, refs.map((v) => ({v,name:v,note:"",literalName:true})), "", put, "Copy model reference");
+    };
+    wrap.append(cp);
+  }
   return wrap;
 }
 // an account or key list's last row, adding one
@@ -14729,10 +14771,8 @@ function resetInText(at) {
   return at <= Date.now() ? t("Reset time passed") : t("resets {in}", { in: untilText(at) });
 }
 
-// runsOutText: when the soonest of what a window has left is lost, apart
-// from its reset (WorkBuddy's credits come in packages that each end on
-// their own day, runsOutAt): "232.4 credits expire tomorrow 00:39"; ""
-// when not known or past. Smart routing spends such an account first.
+// runsOutText shows soonest remaining-credit expiry, apart from reset;
+// empty if unknown/past. Smart routing spends these credits first.
 function runsOutText(w, when = resetClock) {
   const at = w.runsOutAt ? new Date(w.runsOutAt) : null;
   if (!at || !(at > Date.now()) || !(w.runsOut > 0)) return "";
@@ -14896,7 +14936,7 @@ function renderKeyAccounts(p) {
     const name = el("button", "n rename" + (k.name ? "" : " mono"), k.name || k.masked);
     name.title = t("Rename");
     name.onclick = () => renameIn(name, k.name || "", t("Name, e.g. Personal or Team"), (n) => accountAction("keys/rename", { id: p.id, ref: k.id, name: n }));
-    row.append(dot, name);
+    row.append(dot, name, routingAliasButton(p, k, true));
     if (k.name) row.append(el("span", "plan mono", k.masked));
     // a key rotated at the vendor (#1869): its new value pasted in place
     const edit = el("button", "key-edit");
@@ -15478,9 +15518,8 @@ const API_NAMES = { openai: "OpenAI compatible", responses: "OpenAI Responses", 
 // urlHint: the Base URL's placeholder for the API it is for
 const urlHint = (api) => api === "anthropic" ? "https://…" : api === "gemini" ? "https://…/v1beta" : "https://…/v1";
 
-// respellURL turns a base URL into the one protocol api is asked at: the
-// root for Anthropic, which adds /v1 itself, …/v1 for OpenAI's two,
-// …/v1beta for Gemini's (as Google's SDKs add it).
+// WORKSPACE is provider.WorkspaceID's placeholder. workspaceOf extracts it
+// from tmpl's URL: "" if absent, null if the URL doesn't match.
 const WORKSPACE = "{WorkspaceId}";
 function workspaceOf(tmpl, url) {
   if (!tmpl || !url) return null;

@@ -92,10 +92,20 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const hov = await page.evaluate(() => {
           const row = document.querySelector('.editor .acc[data-account-id="bbbbbbbbbb"]');
           const box = row.closest(".accts").getBoundingClientRect();
-          const rm = row.querySelector(".text.quiet:not(.key-switch)"), n = row.querySelector(".n");
+          // Remove sits in the row's key-acts group with the switch, while
+          // the row's routing-alias editor holds a .text.quiet button of
+          // its own (a 22px "@" one while no alias is set) and stands
+          // before the actions, so .text.quiet alone would find the
+          // alias's: Remove is the row's one .text.quiet button that says
+          // Remove, the direct child of its key-acts group, never inside
+          // the alias wrapper
+          const rms = [...row.querySelectorAll(".text.quiet")].filter((e) => e.textContent === t("Remove") && e.parentElement.matches(".key-acts") && !e.closest(".acct-routing-alias"));
+          if (rms.length !== 1) throw new Error(`the key row holds ${rms.length} Remove buttons, want exactly one`);
+          const rm = rms[0], n = row.querySelector(".n");
           const b = rm.getBoundingClientRect();
-          return { opacity: getComputedStyle(rm).opacity, cw: rm.clientWidth, sw: rm.scrollWidth, right: b.right, boxRight: box.right, name: n.clientWidth };
+          return { remove: rm.textContent === t("Remove") && !rm.closest(".acct-routing-alias"), opacity: getComputedStyle(rm).opacity, cw: rm.clientWidth, sw: rm.scrollWidth, right: b.right, boxRight: box.right, name: n.clientWidth };
         });
+        assert.equal(hov.remove, true, "the measured button is Remove, not its row's routing-alias editor");
         assert.equal(hov.opacity, "1", "Remove isn't shown on hover");
         assert.ok(hov.cw > 0 && hov.cw >= hov.sw - 1, `Remove is cut on hover (${hov.cw} of ${hov.sw}px)`);
         assert.ok(hov.right <= hov.boxRight + 0.5, "Remove runs out of the card on hover");

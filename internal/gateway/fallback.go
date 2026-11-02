@@ -300,7 +300,11 @@ func perKeyOf(p provider.Provider, model string, from provider.Protocol) (out, a
 // serve the model (provider.AccountModels, #474): never tried, whatever
 // else there is — none, when every one of them is.
 func perKeyBarred(p provider.Provider, model string, from provider.Protocol) (out, aside, left, barred []candidate) {
-	out, aside, left, barred = perKeyEvery(p, model, from)
+	return perKeyBarredWithHealth(p, model, from, provider.RoutingFileError())
+}
+
+func perKeyBarredWithHealth(p provider.Provider, model string, from provider.Protocol, health error) (out, aside, left, barred []candidate) {
+	out, aside, left, barred = perKeyEveryWithHealth(p, model, from, health)
 	out, aside = keepAtOnce(p.AtOnce(), out, aside)
 	return out, aside, left, barred
 }
@@ -398,6 +402,15 @@ func keyCandidate(p provider.Provider, k provider.KeyOn, model string, capped *c
 // model's test takes them from too (#4992); the usage and spend caps are
 // the gateway's own.
 func perKeyEvery(p provider.Provider, model string, from provider.Protocol) (out, aside, left, barred []candidate) {
+	return perKeyEveryWithHealth(p, model, from, provider.RoutingFileError())
+}
+
+// perKeyEveryWithHealth lets pure previews share their health snapshot.
+// Request planning and final dispatch still perform their current checks.
+func perKeyEveryWithHealth(p provider.Provider, model string, from provider.Protocol, health error) (out, aside, left, barred []candidate) {
+	if health != nil {
+		return nil, nil, nil, nil
+	}
 	if _, off := provider.ModelDisabled(p.ID, model); off || provider.DisabledUnknown() {
 		return nil, nil, nil, nil // the user disabled it (#1867): never planned, a fallback no more than the model asked
 	}
@@ -446,6 +459,9 @@ func perKeyEvery(p provider.Provider, model string, from provider.Protocol) (out
 		barred = append(barred, keyCandidate(p, k, model, spends[k.Rank]))
 	}
 	if len(on) == 0 && len(barred) > 0 {
+		return nil, nil, nil, barred
+	}
+	if len(on) == 0 && p.HasRoutingAliases() {
 		return nil, nil, nil, barred
 	}
 	if len(on) == 0 {
@@ -571,12 +587,15 @@ func (s *Server) planPaused(p provider.Provider, model string, from provider.Pro
 		return cs
 	}
 	out := add(p, model, false)
+	if p.RoutingAlias() != "" {
+		return restLast(out, pl)
+	}
 	if p.CapStop && len(out) == 0 && len(pl.capped)+len(pl.held) > 0 {
 		// every account held at its cap: the user set the provider to end
 		// there (plugins#349), answered 429 rather than sent on
 		return restLast(out, pl)
 	}
-	seen := map[string]bool{p.ID + "/" + model: true}
+	seen := map[string]bool{p.ModelRef(model): true}
 	for _, id := range p.Fallback {
 		if g, ms, ok := provider.FallbackGroup(id); ok {
 			// a routing group: its members as a request to it has them,
@@ -587,7 +606,7 @@ func (s *Server) planPaused(p provider.Provider, model string, from provider.Pro
 				ms = paused(g, ms)
 			}
 			ms = slices.DeleteFunc(ms, func(m provider.Member) bool {
-				k := m.Provider.ID + "/" + m.Model
+				k := m.Provider.ModelRef(m.Model)
 				if seen[k] {
 					return true
 				}
@@ -598,10 +617,10 @@ func (s *Server) planPaused(p provider.Provider, model string, from provider.Pro
 			continue
 		}
 		fp, fm, ok := provider.ResolveRoute(id)
-		if !ok || seen[fp.ID+"/"+fm] {
+		if !ok || seen[fp.ModelRef(fm)] {
 			continue
 		}
-		seen[fp.ID+"/"+fm] = true
+		seen[fp.ModelRef(fm)] = true
 		out = append(out, add(fp, fm, true)...)
 	}
 	out, pl.order, pl.left, _ = standInsOut(out, pl.order, pl.left, !p.NoStandIn)
@@ -1541,7 +1560,11 @@ func spentAfter(cs []candidate) bool {
 // its place can be another (#1801). Unknown allowance, or a rest for a
 // rate limit or an error, is not spent.
 func spentModel(p provider.Provider, model string, from provider.Protocol, now time.Time) (back time.Time, spent bool) {
-	out, aside, _, barred := perKeyBarred(p, model, from)
+	return spentModelWithHealth(p, model, from, now, provider.RoutingFileError())
+}
+
+func spentModelWithHealth(p provider.Provider, model string, from provider.Protocol, now time.Time, health error) (back time.Time, spent bool) {
+	out, aside, _, barred := perKeyBarredWithHealth(p, model, from, health)
 	soonest := func(t time.Time) {
 		if !t.IsZero() && (back.IsZero() || t.Before(back)) {
 			back = t

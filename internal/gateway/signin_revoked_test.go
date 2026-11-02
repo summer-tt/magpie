@@ -184,6 +184,7 @@ func TestRevokedWordsFromAKeyRestAsBefore(t *testing.T) {
 // not to it again.
 func TestRevokedSignInNotCompactedOnAgain(t *testing.T) {
 	codexSignedIn(t, "spare@example.com", "third@example.com")
+	vendorBearer := "Bearer " + codexAccessToken(t)
 	var mu sync.Mutex
 	var tried []string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +213,7 @@ func TestRevokedSignInNotCompactedOnAgain(t *testing.T) {
 		mu.Unlock()
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", CodexPath+"/responses/compact", strings.NewReader(`{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"ping"}]}`))
-		req.Header.Set("Authorization", "Bearer chatgpt-token")
+		req.Header.Set("Authorization", vendorBearer)
 		req.Header.Set("chatgpt-account-id", "acct-1")
 		New().Handler().ServeHTTP(rec, req)
 		mu.Lock()

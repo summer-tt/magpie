@@ -22,6 +22,11 @@ import (
 // search and vision stand-ins) go without them, as their replies are
 // magpie's to read.
 func (s *Server) serveAgent(w http.ResponseWriter, r *http.Request, from provider.Protocol, body []byte) {
+	var routeOK bool
+	r, routeOK = constrainRouting(w, r, from, body)
+	if !routeOK {
+		return
+	}
 	withGatewaySession(w, r)
 	// the agent's own turn, which the user's model for requests masking
 	// would change is for (maskRouteFor)
@@ -70,6 +75,11 @@ func (s *Server) serveAgent(w http.ResponseWriter, r *http.Request, from provide
 		}
 		var turned *gwmw.Reject
 		body, turned = run.Request(body)
+		if !routingRewriteAllowed(r, body) {
+			waited()
+			writeError(w, from, 400, "middleware cannot change the account of a qualified model")
+			return
+		}
 		waited()
 		if turned != nil {
 			writeError(w, from, turned.Status, turned.Message)

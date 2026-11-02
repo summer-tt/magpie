@@ -200,6 +200,7 @@ func TestCodexPausedOwnAccountPassedOver(t *testing.T) {
 // paused, it relays on the sign-in as before.
 func TestCodexPausedOwnAccountNotCompactedOn(t *testing.T) {
 	codexSignedIn(t, "spare@example.com")
+	vendorBearer := "Bearer " + codexAccessToken(t)
 	var tried, auths, paths []string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tried = append(tried, r.Header.Get("chatgpt-account-id"))
@@ -216,19 +217,19 @@ func TestCodexPausedOwnAccountNotCompactedOn(t *testing.T) {
 		tried, auths, paths = nil, nil, nil
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", CodexPath+"/responses/compact", strings.NewReader(`{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"ping"}]}`))
-		req.Header.Set("Authorization", "Bearer chatgpt-token")
+		req.Header.Set("Authorization", vendorBearer)
 		req.Header.Set("chatgpt-account-id", "acct-1")
 		New().Handler().ServeHTTP(rec, req)
 		return rec.Code
 	}
 
-	if code := compact(); code != 200 || strings.Join(tried, ",") != "acct-1" || auths[0] != "Bearer chatgpt-token" {
+	if code := compact(); code != 200 || strings.Join(tried, ",") != "acct-1" || auths[0] != vendorBearer {
 		t.Fatalf("in use: %d tried %v auth %v", code, tried, auths)
 	}
 	if err := provider.SetLoginOn("codex", "me@example.com", false); err != nil {
 		t.Fatal(err)
 	}
-	if code := compact(); code != 200 || strings.Join(tried, ",") != "acct-2" || auths[0] == "Bearer chatgpt-token" || paths[0] != "/backend-api/codex/responses/compact" {
+	if code := compact(); code != 200 || strings.Join(tried, ",") != "acct-2" || auths[0] == vendorBearer || paths[0] != "/backend-api/codex/responses/compact" {
 		t.Fatalf("paused: %d tried %v auth %v path %v", code, tried, auths, paths)
 	}
 	// a key held to some accounts (#905) is asked of the account it goes
@@ -257,7 +258,7 @@ func TestCodexPausedOwnAccountNotCompactedOn(t *testing.T) {
 	if err := provider.SetLoginOn("codex", "spare@example.com", false); err != nil {
 		t.Fatal(err)
 	}
-	if code := compact(); code != 200 || strings.Join(tried, ",") != "acct-1" || auths[0] != "Bearer chatgpt-token" {
+	if code := compact(); code != 200 || strings.Join(tried, ",") != "acct-1" || auths[0] != vendorBearer {
 		t.Fatalf("with the other off: %d tried %v auth %v", code, tried, auths)
 	}
 }

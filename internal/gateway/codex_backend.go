@@ -123,13 +123,18 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 		// the service tier set for Codex, in place of the one it asked
 		body = codexTiered(r, body, model)
 		body = keyTiered(r, body, model)
+		var routeOK bool
+		r, routeOK = constrainRouting(w, r, provider.Responses, body)
+		if !routeOK {
+			return
+		}
 		// a turn of the conversation's own: the model its side calls may
 		// follow (codexFollowTo)
 		meta := requestSessionMetadata(r.Header, body)
 		kind := requestCallKind(r.Header, meta)
 		// a subagent resume_agent brought back on its lead's model goes
 		// back on the one it was spawned with (codexResumeTo)
-		if to := s.codexResumeTo(r, agentOf(r), kind, model, meta); to != "" {
+		if to := s.codexResumeTo(r, agentOf(r), kind, model, meta); to != "" && constrainedRef(r) == "" {
 			body, model = withModel(body, to), to
 		}
 		s.codexLeads.saw(r, kind, model)
@@ -139,14 +144,23 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 		if rest == "/responses" {
 			session := func() string { return s.codexSideSession(r, body) }
 			if to := codexTitlesTo(r.Header, body, false, session); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexTitle(w, r, body, to)
 				return
 			}
 			if to := codexDescriptionsTo(r.Header, body, false, session); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexDescription(w, r, body, to)
 				return
 			}
 			if to := codexSummariesTo(r.Header, body, false, session); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexSummary(w, r, body, to)
 				return
 			}
@@ -155,6 +169,9 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if to := codexPredictionsTo(r.Header, body, false, session); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexPrediction(w, r, body, to)
 				return
 			}
@@ -167,8 +184,10 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 			// conversation is on when that is one of magpie's, not on
 			// the ChatGPT sign-in (codexFollowTo). Set to the lead's model,
 			// a subagent asking for any model goes on the lead's, one of
-			// Codex's own through its sign-in too (codexSubagentPick)
-			if !strings.Contains(model, "/") || provider.CodexSubagentModel() == provider.CodexSubagentLead {
+			// Codex's own through its sign-in too (codexSubagentPick) —
+			// all but a qualified one, whose provider and owner its alias
+			// named and the request keeps (constrainRouting)
+			if (!strings.Contains(model, "/") || provider.CodexSubagentModel() == provider.CodexSubagentLead) && constrainedRef(r) == "" {
 				pick := s.codexSubagentPick(r, agentOf(r), kind, model, body, true)
 				if to := s.codexFollowTo(r, agentOf(r), kind, model, body); to != "" {
 					body, model = withModel(body, to), to
@@ -245,19 +264,53 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 			// compaction still relays on: refused as its turns are (#967),
 			// with nothing asked of OpenAI — and refused when the sign-in
 			// can't be shown to be the key's, switched off or gone
-			on := compactOn(r, model)
+			on, relay, compactErr := compactOn(r, model)
+			if compactErr != nil {
+				writeError(w, provider.Responses, routingStatus(compactErr), compactErr.Error())
+				return
+			}
 			// a seal only its writer reads (#1099, #2271): a compact
 			// carrying one magpie recorded the writer of is judged here —
 			// the writer on in magpie answers it signed as the writer, a
 			// gone writer is refused with the reason — not relayed to be
 			// refused there (#2727)
-			writer, gone, _ := sealedCompact(r, model, body)
+			var writer *provider.Provider
+			var gone string
+			gatewayKey := access.Caller(r.Context()).KeyID != ""
+			if gatewayKey || on != nil || relay != nil || apiKey(r.Header) {
+				var judged bool
+				writer, gone, judged = sealedCompact(r, model, body)
+				if judged && writer == nil && gone == "" && !apiKey(r.Header) {
+					// A seal of the local sign-in still fixes the owner when
+					// the client's managed credential is another account's.
+					var err error
+					writer, err = provider.Find("codex")
+					if err != nil || writer.Account == nil {
+						writeError(w, provider.Responses, http.StatusServiceUnavailable, "the compaction writer is unavailable")
+						return
+					}
+				}
+			}
+			if gatewayKey && r.Header.Get(AccountHeader) != "" && writer == nil && on == nil && relay == nil && gone == "" {
+				writeError(w, provider.Responses, http.StatusForbidden, AccountHeader+": no compaction writer matches the pinned account")
+				return
+			}
 			if writer != nil {
-				on = writer
+				if !compactPinAllows(r.Header.Get(AccountHeader), *writer) {
+					writeError(w, provider.Responses, http.StatusForbidden, AccountHeader+": the compaction writer is not the pinned account")
+					return
+				}
+				if relay == nil || relay.RoutingID() != writer.RoutingID() {
+					on, relay = writer, nil
+				}
 			}
 			// the key's accounts are asked of the account the compact
 			// goes to: the writer when it answers it, not the sign-in
-			if who, held := compactSigninHeld(r, model, on); held {
+			heldOn := on
+			if heldOn == nil {
+				heldOn = relay
+			}
+			if who, held := compactSigninHeld(r, model, heldOn); held {
 				msg := compactHeldError(who, model)
 				if writer != nil {
 					msg = sealedCompactHeldError(who, model, writer)
@@ -272,6 +325,9 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 			if on != nil {
 				s.codexUpstreamOn(w, r, rest, body, on)
 				return
+			}
+			if relay != nil {
+				r = routingRequest(r, *relay)
 			}
 			break // preserve native compaction's existing passthrough
 		}
@@ -760,41 +816,102 @@ func sealedCompactHeldError(who access.Identity, model string, writer *provider.
 		model, writer.Account.User, who.KeyName, keyAccountNames(who), writer.Account.User)
 }
 
-// compactOn is the account a native compaction of one of Codex's own
-// models goes to in place of the ChatGPT sign-in it would relay on: one of
-// Codex's other accounts on in magpie while the sign-in is paused there
-// (#263, the user's own account kept for Codex's remote control, Computer
-// Use and the like, another doing the work). Its turns already go to the
-// others (codexAccounts, routing passing the paused one over); relayed as
-// it came, compaction alone still spent the paused account — and on
-// history the others sealed. The first not resting is taken, else the
-// first. nil keeps the relay to the sign-in: not paused, or nothing else
-// on, or Codex on an API key.
-func compactOn(r *http.Request, model string) *provider.Provider {
-	if model == "" || strings.Contains(model, "/") || apiKey(r.Header) || r.Header.Get(AccountHeader) != "" {
-		return nil
+// compactPinAllows applies the ordinary account pin to native compaction,
+// which does not pass through serve's pinTo candidate filtering.
+func compactPinAllows(raw string, p provider.Provider) bool {
+	if raw == "" {
+		return true
+	}
+	for _, name := range []string{raw, pinnedName(raw)} {
+		if strings.EqualFold(name, p.Account.User) || name == p.AccountID() || name == p.ID+"@"+p.Account.User {
+			return true
+		}
+		if name == p.ID {
+			if own, err := provider.Find(p.ID); err == nil && own.RoutingID() == p.RoutingID() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// compactOn identifies the credential before choosing a managed compaction
+// account. An eligible caller keeps its bearer; a paused current sign-in may
+// use an ordinary spare. Unmanaged credentials keep their own relay.
+func compactOn(r *http.Request, model string) (on, relay *provider.Provider, err error) {
+	if model == "" || strings.Contains(model, "/") || apiKey(r.Header) {
+		return nil, nil, nil
+	}
+	gatewayKey := access.Caller(r.Context()).KeyID != ""
+	if gatewayKey && provider.CodexAPIKeySignedIn() {
+		// Codex's API-key sign-in spends no managed ChatGPT account.
+		return nil, nil, nil
+	}
+	var identity provider.AccountRef
+	if !gatewayKey {
+		token := ""
+		if fields := strings.Fields(r.Header.Get("Authorization")); len(fields) == 2 && strings.EqualFold(fields[0], "Bearer") {
+			token = fields[1]
+		}
+		var managed bool
+		identity, managed, err = provider.CodexClientIdentity(token, r.Header.Get("chatgpt-account-id"))
+		if err != nil {
+			return nil, nil, err
+		}
+		if !managed {
+			if r.Header.Get(AccountHeader) != "" {
+				return nil, nil, errors.New(AccountHeader + ": the client credential is not a managed Codex account")
+			}
+			return nil, nil, nil
+		}
 	}
 	p, _, ok := provider.Resolve("codex/" + model)
-	if !ok || p.Account == nil || p.Account.Agent != "codex" || !p.OwnPaused() {
-		return nil
+	if !ok || p.Account == nil || p.Account.Agent != "codex" {
+		if gatewayKey {
+			if who, held := compactSigninHeld(r, model, nil); held {
+				return nil, nil, &provider.RoutingError{Status: http.StatusForbidden, Message: compactHeldError(who, model)}
+			}
+		}
+		return nil, nil, errors.New("native compaction's managed account is unavailable")
 	}
-	others := p.AlsoOn()
-	// one whose sign-in its vendor revoked is the last asked (#1793)
+	if gatewayKey {
+		// The gateway key authorizes selection, not its replaced bearer.
+		// Caller accounts are checked against the selected account below.
+		identity.ID = p.RoutingID()
+	} else if !p.RoutingAllows(identity.ID) {
+		return nil, nil, errors.New("native compaction's client account is reserved for qualified requests")
+	}
+	all := append([]provider.Provider{p}, p.AlsoOn()...)
+	client := slices.IndexFunc(all, func(o provider.Provider) bool { return o.RoutingID() == identity.ID })
+	if client < 0 {
+		return nil, nil, errors.New("native compaction's client account is not on")
+	}
+	pin := r.Header.Get(AccountHeader)
+	if !all[client].OwnPaused() && p.RoutingAllows(all[client].RoutingID()) && compactPinAllows(pin, all[client]) {
+		if gatewayKey {
+			return &all[client], nil, nil
+		}
+		return nil, &all[client], nil
+	}
+	others := slices.DeleteFunc(all, func(o provider.Provider) bool {
+		return o.OwnPaused() || !p.RoutingAllows(o.RoutingID()) || !compactPinAllows(pin, o)
+	})
+	// Keep the existing preference for an account not resting or revoked.
 	revoked := func(o provider.Provider) bool { return provider.SignInMarked(o.Account) }
 	for i, o := range others {
 		if !resting(candidate{p: o, model: model, rest: o.ID}) && !revoked(o) {
-			return &others[i]
+			return &others[i], nil, nil
 		}
 	}
 	for i, o := range others {
 		if !revoked(o) {
-			return &others[i]
+			return &others[i], nil, nil
 		}
 	}
 	if len(others) > 0 {
-		return &others[0]
+		return &others[0], nil, nil
 	}
-	return nil
+	return nil, nil, errors.New("native compaction has no available ordinary routing account matching its pin")
 }
 
 // codexAccounts is what a request for one of Codex's own models is served
@@ -815,6 +932,9 @@ func codexAccounts(r *http.Request, model string) (string, bool) {
 	}
 	id := "codex/" + model
 	p, _, ok := provider.Resolve(id)
+	if provider.RoutingFileError() != nil || ok && p.HasRoutingAliases() {
+		return id, true
+	}
 	// one account named is found among them however many are on
 	pinned := h.Get(AccountHeader) != ""
 	// an account with a usage cap, or set not to spend its credits, goes
@@ -894,7 +1014,7 @@ func sealedCompact(r *http.Request, model string, body []byte) (writer *provider
 	if !ok || strings.Contains(cp.Who, "#") {
 		return nil, "", false
 	}
-	if acct := r.Header.Get("chatgpt-account-id"); acct != "" && acct != provider.CodexSignedInAccount() {
+	if acct := r.Header.Get("chatgpt-account-id"); access.Caller(r.Context()).KeyID == "" && acct != "" && acct != provider.CodexSignedInAccount() {
 		return nil, "", false
 	}
 	p, err := provider.Find(cp.Provider)
@@ -920,6 +1040,9 @@ func sealedCompact(r *http.Request, model string, body []byte) (writer *provider
 		return nil, checkpointError(model, cp), true
 	}
 	user := strings.TrimPrefix(cp.Who, cp.Provider+"@")
+	if !p.RoutingAllows(p.RoutingIDOf(user)) {
+		return nil, "the compaction writer is reserved for an account-qualified model; ordinary compaction cannot use it", true
+	}
 	// the writer is matched by its email, as the record holds the account
 	// user: two Team seats of one email read as one here, and a compact
 	// sealed by either relays as it came — the old forwarding, not worse
@@ -1264,8 +1387,24 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 			var asking, asked, wrote atomic.Int64
 			traced := httptrace.WithClientTrace(attempt, nt.hooks(&asking, &asked, &wrote))
 			ctx := provider.ViaSignedIn(traced, "codex")
+			sendOn := on
+			if sendOn == nil {
+				// A managed sign-in relays with Codex's original bearer,
+				// while retaining the account selected before any wait.
+				if p, ok := r.Context().Value(routingSendKey{}).(provider.Provider); ok {
+					sendOn = &p
+				}
+			}
+			if sendOn != nil {
+				if err := routingSendError(*sendOn); err != nil {
+					writeError(w, provider.Responses, http.StatusServiceUnavailable, err.Error())
+					end(http.StatusServiceUnavailable, err.Error(), 0, 0)
+					return
+				}
+				ctx = s.metered(ctx, *sendOn, "")
+			}
 			if on != nil {
-				ctx = on.Via(traced)
+				ctx = on.Via(ctx)
 			}
 			req, err := http.NewRequestWithContext(ctx, r.Method, u, bytes.NewReader(body))
 			if err != nil {
@@ -1294,6 +1433,9 @@ func (s *Server) codexUpstreamOn(w http.ResponseWriter, r *http.Request, rest st
 				for _, v := range accept {
 					req.Header.Add("Accept", v)
 				}
+			}
+			if sendOn != nil {
+				req = routingRequest(req, *sendOn)
 			}
 			// left to the transport, the reply comes back plain for the usage in it
 			req.Header.Del("Accept-Encoding")

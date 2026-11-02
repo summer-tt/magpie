@@ -923,7 +923,7 @@ func videoMaker(id string) (p provider.Provider, vendorID string, started time.T
 	if ferr != nil || !drawsGrok(*found) && !found.IsRemoteMagpie() && len(found.PlanVideos()) == 0 {
 		return p, "", started, fmt.Errorf("no provider %q makes videos here", pid)
 	}
-	if found.Account == nil && found.PlansMixed() {
+	if strings.HasPrefix(by, "k") || found.Account == nil && found.PlansMixed() {
 		// asked on the key that started it, at its plan's endpoint
 		q, ok := markedKey(*found, by)
 		if !ok {
@@ -940,6 +940,9 @@ func videoMaker(id string) (p provider.Provider, vendorID string, started time.T
 // remoteVideoID is the id of a video another magpie (p) is making, by its
 // id there: that has dots in it, so it goes in base64.
 func remoteVideoID(p provider.Provider, theirs string, t time.Time) string {
+	if p.Account == nil && p.Key != "" {
+		return customVideoID(p, theirs, t)
+	}
 	return videoID(p, base64.RawURLEncoding.EncodeToString([]byte(theirs)), t)
 }
 
@@ -1070,7 +1073,14 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	p, model, ok := mediaGroupFirst(f.Model, provider.KindVideo)
 	if !ok {
-		p, model, ok = provider.Resolve(f.Model)
+		var resolveErr error
+		p, model, resolveErr = provider.ResolveModel(f.Model)
+		var routingErr *provider.RoutingError
+		if resolveErr != nil && (provider.IsRoutingAliasError(resolveErr) || !errors.As(resolveErr, &routingErr)) {
+			fail(routingStatus(resolveErr), resolveErr.Error())
+			return
+		}
+		ok = resolveErr == nil
 	}
 	if !ok {
 		p, model, ok = bareVideomaker(f.Model)
@@ -1301,14 +1311,18 @@ func (s *Server) startVideo(ctx context.Context, r *http.Request, p provider.Pro
 		}
 		p = cs[0].p
 		onKey = true
-	} else if keyWho, held := accountHolds(r); held {
-		// held to some accounts (#905): sent on a key the calling key may
-		// use, of those in use — not the provider's first alone, which a
-		// key held to a later one was refused by — or none, refused
+	} else {
+		// Single-plan and remote providers still select an eligible key when
+		// the caller has no account restriction; an alias is not an ordinary key.
+		keyWho, held := accountHolds(r)
 		var ok bool
 		if p, ok = allowedKey(keyWho, p, model); !ok {
-			return videoStart{p: p}, 403, errors.New(keyAccountsError(keyWho, f.Model))
+			if held {
+				return videoStart{p: p}, 403, errors.New(keyAccountsError(keyWho, f.Model))
+			}
+			return videoStart{p: p}, http.StatusServiceUnavailable, fmt.Errorf("no routing account is available for %s", p.ID)
 		}
+		onKey = p.Account == nil && p.Key != ""
 	}
 	v := videoStart{p: p, remote: p.IsRemoteMagpie(), onKey: onKey}
 	volcengine := arkFilms(p, model)
@@ -1365,29 +1379,15 @@ func (s *Server) startVideo(ctx context.Context, r *http.Request, p provider.Pro
 	return v, code, err
 }
 
-// videoAsker is p on a key or account the calling key may use, to ask
-// after a video (#905), as starting one is held: a video at the
-// OpenAI-shaped videos API of a provider set up with a base URL, or at an
-// Ark key's tasks, on the key that started it, which the calling key must
-// be allowed; any other on the
-// first key or account it may use, as videosCreate picks. What the calling
-// key is told when it may use none, else "".
+// videoAsker checks the creating credential already restored by videoMaker.
+// A resource lookup never selects another account or applies ordinary-pool
+// eligibility: a started video survives its alias being retired.
 func videoAsker(r *http.Request, p provider.Provider) (provider.Provider, string) {
 	who, held := accountHolds(r)
-	if !held {
+	if !held || p.Key == "" && p.Account == nil || accountAllowed(who, candidate{p: p}) {
 		return p, ""
 	}
-	if !p.IsRemoteMagpie() && (filmsOpenAI(p) || filmsMiniMax(p) || isArk(p) && len(customVideomakers(p)) > 0) {
-		if p.Key == "" && p.Account == nil || accountAllowed(who, candidate{p: p}) {
-			return p, ""
-		}
-		return p, keyAccountsError(who, p.ID)
-	}
-	q, ok := allowedKey(who, p, "")
-	if !ok {
-		return p, keyAccountsError(who, p.ID)
-	}
-	return q, ""
+	return p, keyAccountsError(who, p.ID)
 }
 
 // videoModelHeld is what the calling key is told when its models hold it
@@ -1397,6 +1397,21 @@ func videoModelHeld(r *http.Request, p provider.Provider, model string) string {
 	who, held := keyHolds(r)
 	if !held || model != "" && modelAllowed(who, p, model) {
 		return ""
+	}
+	if model != "" {
+		// A resource retains its creator's alias history, including retired
+		// names. Match the actual credential, never another owner's grant.
+		id := p.RoutingID()
+		for alias, binding := range p.AccountAliases {
+			if binding.AccountID == id && allows(who, p.ID+"/"+model+"@"+alias) {
+				return ""
+			}
+		}
+		for alias, binding := range p.KeyAliases {
+			if binding.KeyID == id && allows(who, p.ID+"/"+model+"@"+alias) {
+				return ""
+			}
+		}
 	}
 	if model == "" {
 		return fmt.Sprintf("The gateway key %q may not ask after this video: %s didn't say which model makes it.", who.KeyName, p.Name)
@@ -1457,7 +1472,7 @@ func (s *Server) videosGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := st.Model
-	if model == "" {
+	if model == "" && drawsGrok(p) {
 		model = "grok-imagine-video"
 	}
 	if held := videoModelHeld(r, p, model); held != "" {
@@ -1503,7 +1518,11 @@ func (s *Server) videosContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, provider.Chat, code, err.Error())
 		return
 	}
-	if held := videoModelHeld(r, p, cmp.Or(st.Model, "grok-imagine-video")); held != "" {
+	model := st.Model
+	if model == "" && drawsGrok(p) {
+		model = "grok-imagine-video"
+	}
+	if held := videoModelHeld(r, p, model); held != "" {
 		writeError(w, provider.Chat, 403, held)
 		return
 	}

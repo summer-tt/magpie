@@ -198,12 +198,14 @@ type memberJSON struct {
 }
 
 type modelRef struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	PName    string `json:"providerName"`
-	Icon     string `json:"icon,omitempty"`
-	Context  int    `json:"context,omitempty"` // the tokens it takes, when known
+	RoutingAlias string `json:"routingAlias,omitempty"`
+	BaseID       string `json:"baseId,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Provider     string `json:"provider"`
+	PName        string `json:"providerName"`
+	Icon         string `json:"icon,omitempty"`
+	Context      int    `json:"context,omitempty"` // the tokens it takes, when known
 	// Efforts: the model's reasoning levels, when known — those a group's
 	// member of it may be fixed at
 	Efforts []string `json:"efforts,omitempty"`
@@ -239,7 +241,7 @@ type modelRef struct {
 
 // servedRef is a served model as the Routing page lists it
 func servedRef(e provider.Entry, s settings.Settings) modelRef {
-	return modelRef{Free: e.Free, Zero: !e.Free && e.Provider.PricedFree(s, e.Model), ID: e.ID, Name: e.Name, Provider: e.Provider.ID, PName: e.Provider.Name, Icon: e.Provider.Icon, Context: e.Context, Efforts: e.Efforts, CanFast: provider.CanFast(*e.Provider, e.Model), OwnFast: provider.OwnFast(*e.Provider, e.Model), Images: seesImages(e), ImagesUnknown: imagesUnknown(e), Sub: e.Provider.Account != nil}
+	return modelRef{Free: e.Free, Zero: !e.Free && e.Provider.PricedFree(s, e.Model), ID: e.ID, RoutingAlias: e.RoutingAlias, BaseID: e.BaseID, Name: e.Name, Provider: e.Provider.ID, PName: e.Provider.Name, Icon: e.Provider.Icon, Context: e.Context, Efforts: e.Efforts, CanFast: provider.CanFast(*e.Provider, e.Model), OwnFast: provider.OwnFast(*e.Provider, e.Model), Images: seesImages(e), ImagesUnknown: imagesUnknown(e), Sub: e.Provider.Account != nil}
 }
 
 type poolJSON struct {
@@ -270,13 +272,17 @@ func imagesUnknown(e provider.Entry) bool { return e.ImageInput == nil && !e.Ima
 // name the user gave each (provider.AccountShown), or keys.
 func onOf(p provider.Provider) (kind string, who []string) {
 	if p.Account != nil {
-		who = append(who, p.AccountShown(p.Account.User))
-		for _, q := range p.AlsoOn() {
-			who = append(who, p.AccountShown(q.Account.User))
+		for _, q := range append([]provider.Provider{p}, p.AlsoOn()...) {
+			if p.RoutingAllows(q.RoutingID()) {
+				who = append(who, p.AccountShown(q.Account.User))
+			}
 		}
 		return "account", who
 	}
 	for _, k := range p.KeysOn() {
+		if !p.RoutingAllows(provider.KeyID(k.Key)) {
+			continue
+		}
 		n := k.Name
 		if n == "" {
 			n = provider.Mask(k.Key)
@@ -293,6 +299,9 @@ func keyPools(p provider.Provider) []poolJSON {
 	var out []poolJSON
 	at := map[provider.Protocol]int{}
 	for _, k := range p.KeysOn() {
+		if !p.RoutingAllows(provider.KeyID(k.Key)) {
+			continue
+		}
 		if len(p.WithKey(k).Speaks()) == 0 {
 			continue // made for a protocol this provider has no endpoint for
 		}

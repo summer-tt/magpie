@@ -591,7 +591,10 @@ type Provider struct {
 	// balance, what the user typed is left on each key, by its KeyID: the
 	// key's card shows it less what magpie priced its calls at since
 	// (see key_balance_own.go).
-	KeyOwnBalances map[string]OwnBalance `json:"keyOwnBalances,omitempty"`
+	KeyOwnBalances map[string]OwnBalance          `json:"keyOwnBalances,omitempty"`
+	AccountAliases map[string]AccountAliasBinding `json:"accountAliases,omitempty"`
+	KeyAliases     map[string]KeyAliasBinding     `json:"keyAliases,omitempty"`
+	routing        routingSelection
 
 	// BalanceURL, when set, is where the vendor tells what is left on a
 	// key, asked with the key the way a chat request carries it; BalancePath
@@ -831,38 +834,54 @@ func (e *unreadableError) Error() string {
 
 func (e *unreadableError) Unwrap() []error { return []error{ErrUnreadable, e.err} }
 
-// Reads used for an edit must keep errors: a broken file is not an empty
-// catalog to write over. Only a missing file is a first use.
-// fileReads counts read, for the test that a page's look at whether the
-// file parses doesn't parse it again.
+// fileReads counts fresh provider file reads for cached-health checks.
 var fileReads atomic.Int64
 
+// A backup can restore the catalog for display, but cannot prove the current
+// routing isolation state. Keep both facts from one reader.
+type providerFileRead struct {
+	file      file
+	err       error
+	recovered bool
+}
+
+// read preserves the existing recovery contract for catalog readers.
 func read() (file, error) {
+	state := readProviderState()
+	if state.recovered {
+		return state.file, nil
+	}
+	return state.file, state.err
+}
+
+func readProviderState() providerFileRead {
 	fileReads.Add(1)
-	var f file
 	b, err := steady.ReadFile(Path())
 	if errors.Is(err, os.ErrNotExist) {
-		return f, nil
+		return providerFileRead{}
 	}
 	if err != nil {
-		return f, &unreadableError{Path(), err}
+		return providerFileRead{err: &unreadableError{Path(), err}}
 	}
-	// An editor that saves with a byte-order mark leaves JSON that Go's
-	// decoder refuses; read as broken, the file fell back to its .bak, an
-	// older generation without what was saved since (#1821).
+	return providerStateOf(b)
+}
+
+func providerStateOf(b []byte) providerFileRead {
+	var f file
 	b = bytes.TrimPrefix(b, utf8BOM)
 	if err := json.Unmarshal(b, &f); err != nil {
-		// one left all zero by a crash (#1505) is its last good generation
+		failed := &unreadableError{Path(), err}
 		bak, ferr := lastgood.Fallback(Path(), b, validProviders)
 		if ferr != nil {
-			return file{}, &unreadableError{Path(), err}
+			return providerFileRead{err: failed}
 		}
 		f = file{}
 		if err := json.Unmarshal(bak, &f); err != nil {
-			return file{}, &unreadableError{Path(), err}
+			return providerFileRead{err: &unreadableError{Path(), err}}
 		}
+		return providerFileRead{file: f, err: failed, recovered: true}
 	}
-	return f, nil
+	return providerFileRead{file: f}
 }
 
 // validProviders is providers.json's contents read as the catalog.
@@ -884,6 +903,34 @@ func FileError() error {
 	_, err := read()
 	return err
 }
+
+// RoutingFileError reports the current file's health. A recovered backup may
+// be displayed, but never used to restore an unknown ordinary account pool.
+func RoutingFileError() error {
+	// Only the health result is shared. Edits and dispatch still read fresh
+	// provider data; no mutable provider map or slice is cached here.
+	health, err := filememo.Read("provider-routing-health", Path(), func(b []byte) (routingFileHealth, error) {
+		state := providerStateOf(b)
+		if state.err != nil {
+			return routingFileHealth{state.err}, nil
+		}
+		for _, p := range state.file.Providers {
+			if err := validateRoutingAliases(p); err != nil {
+				return routingFileHealth{err}, nil
+			}
+		}
+		return routingFileHealth{}, nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return &unreadableError{Path(), err}
+	}
+	return health.err
+}
+
+type routingFileHealth struct{ err error }
 
 // Routings is the routing of each provider and group providers.json sets
 // one for, read from the file alone: for what asks often (the rotation
@@ -911,6 +958,11 @@ func Routings() ([]string, error) {
 // that a read at that moment sees the old catalog or the new one, never a
 // file cut short.
 func store(f file) error {
+	for _, p := range f.Providers {
+		if err := validateRoutingAliases(p); err != nil {
+			return err
+		}
+	}
 	p := Path()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
@@ -999,6 +1051,8 @@ func (p Provider) clone() Provider {
 	p.AccountNames = maps.Clone(p.AccountNames)
 	p.KeySpendCaps = maps.Clone(p.KeySpendCaps)
 	p.KeyOwnBalances = maps.Clone(p.KeyOwnBalances)
+	p.AccountAliases = maps.Clone(p.AccountAliases)
+	p.KeyAliases = maps.Clone(p.KeyAliases)
 	if p.AccountWindowCaps != nil {
 		m := make(map[string]map[string]int, len(p.AccountWindowCaps))
 		for k, v := range p.AccountWindowCaps {
@@ -1124,6 +1178,7 @@ func accountSettings(a, pk Provider) Provider {
 	a.UseFirst = pk.UseFirst
 	a.NoStandIn = pk.NoStandIn
 	a.AccountNames = pk.AccountNames
+	a.AccountAliases, a.KeyAliases, a.routing = pk.AccountAliases, pk.KeyAliases, pk.routing
 	a.MaxConcurrency, a.PinUpstream = pk.MaxConcurrency, pk.PinUpstream
 	a.MaxAccounts = pk.MaxAccounts
 	a.AccountConcurrency, a.QueueLimit, a.QueueWait = pk.AccountConcurrency, pk.QueueLimit, pk.QueueWait
@@ -1264,6 +1319,9 @@ func Save(p Provider) error {
 	// where a picture came from goes only with that picture
 	if p.IconFrom = strings.TrimSpace(p.IconFrom); !strings.HasPrefix(p.Icon, iconPrefix) {
 		p.IconFrom = ""
+	}
+	if err := validateRoutingAliases(p); err != nil {
+		return err
 	}
 	if p.ID == "" {
 		p.ID = Slug(p.Name)

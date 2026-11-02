@@ -3235,10 +3235,12 @@ func (p Provider) Chosen(id string) bool {
 
 // Entry is one model as the agents see it.
 type Entry struct {
-	ID      string `json:"id"`                // what the agent sends magpie
-	Model   string `json:"model"`             // what magpie sends the vendor
-	Name    string `json:"name"`              // the user's name for it, when they gave one (SetModelName)
-	Default string `json:"default,omitempty"` // the model's own name, when the user gave it another
+	RoutingAlias string `json:"routingAlias,omitempty"`
+	BaseID       string `json:"baseId,omitempty"`
+	ID           string `json:"id"`                // what the agent sends magpie
+	Model        string `json:"model"`             // what magpie sends the vendor
+	Name         string `json:"name"`              // the user's name for it, when they gave one (SetModelName)
+	Default      string `json:"default,omitempty"` // the model's own name, when the user gave it another
 	// Plain is a remote magpie's model's name there alone, when Name is
 	// its label there with that magpie's provider after it (catalog.Model's)
 	Plain string `json:"-"`
@@ -3367,6 +3369,7 @@ func catalogKeeping(keep func(Entry) bool) []Entry {
 			out = append(out, e)
 		}
 	}
+	out = append(out, qualifiedEntries(out)...)
 	return out
 }
 
@@ -3498,7 +3501,8 @@ func groupKeptIn(entries []Entry) map[string][]string {
 // providers of 20 models (#3725).
 func Served() []Entry {
 	return heldFrom("served", providerEntries(), func(entries []Entry) []Entry {
-		return slices.Clip(append(slices.Clone(groupEntries(entries)), entries...))
+		out := append(slices.Clone(groupEntries(entries)), entries...)
+		return slices.Clip(append(out, qualifiedEntries(entries)...))
 	})
 }
 
@@ -3737,10 +3741,16 @@ func Resolve(id string) (Provider, string, bool) {
 		}
 		return Provider{}, "", false
 	}
+	if p, m, handled, err := resolveRoutingAlias(id); handled {
+		return p, m, err == nil
+	}
 	return resolveIn(providerEntries(), id)
 }
 
 func resolveIn(entries []Entry, id string) (Provider, string, bool) {
+	if p, m, handled, err := resolveRoutingAlias(id); handled {
+		return p, m, err == nil
+	}
 	// by index: an Entry, its Provider in it, is large, and a copy of each
 	// one looked past was most of a group's members resolved (membersIn)
 	for i := range entries {

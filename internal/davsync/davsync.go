@@ -928,7 +928,20 @@ func hashes(b backup.Bundle) map[string]string {
 		"library":   h(lib),
 	}
 	if b.SignIns != nil { // as before them, without them
-		out["signins"] = h(b.SignIns.Hashes())
+		credentials := b.SignIns.Hashes()
+		out["signins"] = h(credentials)
+		// Metadata-only edits must pass syncOnce's early returns and be
+		// uploaded. Per-record deletion baselines remain credential-only:
+		// an intentionally retained local owner is not a credential edit.
+		owners := map[string][3]string{}
+		for key, l := range b.SignIns.PluginLogins {
+			if _, ok := b.SignIns.Plugins[key]; ok {
+				owners[key] = [3]string{l.Agent, l.Home, l.ID}
+			}
+		}
+		if len(owners) > 0 {
+			out["signins"] = h([]any{credentials, owners})
+		}
 	}
 	if b.Memory != nil { // as before it, without it
 		out["memory"] = b.Memory.Hash()
@@ -1487,6 +1500,13 @@ func syncOnce(ctx context.Context, c Config, st *state) error {
 		}
 		saved = dir
 	}
+	var signInProviders []provider.Provider
+	if c.SignIns && slices.Contains(bringIn, "providers") {
+		signInProviders = remote.Providers
+		if err := provider.CheckSignInsRouting(remote.SignIns, signInProviders); err != nil {
+			return fmt.Errorf("bringing in the sign-ins: %w", err)
+		}
+	}
 	for _, p := range bringIn {
 		if p == "agents" {
 			got, err := bringAgents(remote.Agents, afterW)
@@ -1545,7 +1565,7 @@ func syncOnce(ctx context.Context, c Config, st *state) error {
 		var plan provider.SignInPlan
 		merged.SignIns, plan, shared = provider.MergeSignIns(local.SignIns, remote.SignIns, st.SignIns)
 		if !plan.Empty() {
-			if _, err := provider.ApplySignIns(plan); err != nil {
+			if _, err := provider.ApplySignIns(plan, signInProviders...); err != nil {
 				return fmt.Errorf("bringing in the sign-ins: %w", err)
 			}
 			if local, err = collect(c); err != nil {

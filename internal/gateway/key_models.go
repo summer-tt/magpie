@@ -242,14 +242,17 @@ func modelAllowed(who access.Identity, p provider.Provider, model string) bool {
 
 // modelListed is modelAllowed by the key's models alone.
 func modelListed(who access.Identity, p provider.Provider, model string) bool {
-	if allows(who, p.ID+"/"+model) {
+	allowed := func(id string) bool {
+		return allows(who, p.ModelRef(id)) || p.RoutingAlias() != "" && allows(who, p.ID+"/"+id)
+	}
+	if allowed(model) {
 		return true
 	}
 	if own := p.OwnModelID(model); own != model {
-		return allows(who, p.ID+"/"+own)
+		return allowed(own)
 	}
 	if local := p.ListedModelID(model); local != model {
-		return allows(who, p.ID+"/"+local)
+		return allowed(local)
 	}
 	return false
 }
@@ -372,7 +375,7 @@ func groupKeeps(who access.Identity, g provider.Group, ms []provider.Member) map
 			continue
 		}
 		if named || memberAllowed(who, m) {
-			out[m.Provider.ID+"/"+m.Model] = true
+			out[m.Provider.ModelRef(m.Model)] = true
 		}
 	}
 	return out
@@ -414,7 +417,7 @@ func newKeyList(who access.Identity) *keyList {
 // accounts are set not to serve (#474) is none of the key's.
 func (k *keyList) entryAllowed(e provider.Entry) bool {
 	who := k.who
-	if !who.Restricted() {
+	if !who.Restricted() && len(who.Accounts) == 0 {
 		return true
 	}
 	if e.Group != "" {
@@ -470,6 +473,9 @@ func accountServesOn(who access.Identity, p provider.Provider, model string, ref
 		return who.AllowsAccount(p.ID, "")
 	}
 	for _, r := range refs {
+		if !p.RoutingAllows(p.RoutingIDOf(r.User)) && !r.Key || r.Key && !p.RoutingAllows(r.ID) {
+			continue
+		}
 		if !who.AllowsAccount(p.ID, r.ID) {
 			continue
 		}
@@ -572,7 +578,7 @@ func allowedCandidates(who access.Identity, cs []candidate, pl planned, members 
 	order := pl.order[:0:0]
 	held := false
 	for i, c := range cs {
-		if !members[c.p.ID+"/"+c.model] && !modelAllowed(who, c.p, c.model) {
+		if !members[c.p.ModelRef(c.model)] && !modelAllowed(who, c.p, c.model) {
 			continue // a model the key may not use: skipped, as before
 		}
 		if !accountAllowed(who, c) {
@@ -593,7 +599,7 @@ func allowedCandidates(who access.Identity, cs []candidate, pl planned, members 
 	// nor is one held for its credits there for a reset to bring back, or
 	// one past its cap for a conversation kept strictly on it
 	gone := func(c candidate) bool {
-		return !members[c.p.ID+"/"+c.model] && !modelAllowed(who, c.p, c.model) || !accountAllowed(who, c)
+		return !members[c.p.ModelRef(c.model)] && !modelAllowed(who, c.p, c.model) || !accountAllowed(who, c)
 	}
 	pl.held = slices.DeleteFunc(slices.Clone(pl.held), gone)
 	pl.capped = slices.DeleteFunc(slices.Clone(pl.capped), gone)
@@ -714,10 +720,10 @@ func memberHeld(c candidate, m provider.Member, g provider.Group) string {
 // drawing's, the decision path's).
 func allowedKey(who access.Identity, p provider.Provider, model string) (provider.Provider, bool) {
 	if p.Key == "" {
-		return p, p.Account == nil || accountAllowed(who, candidate{p: p, model: model})
+		return p, p.RoutingAllows(p.RoutingID()) && (p.Account == nil || accountAllowed(who, candidate{p: p, model: model}))
 	}
 	for _, k := range p.KeysOn() {
-		if q := p.WithKey(k); accountAllowed(who, candidate{p: q, model: model}) {
+		if q := p.WithKey(k); p.RoutingAllows(q.RoutingID()) && accountAllowed(who, candidate{p: q, model: model}) {
 			return q, true
 		}
 	}
@@ -735,6 +741,9 @@ func allowedKey(who access.Identity, p provider.Provider, model string) (provide
 // key may not use. A provider with no key and no account (a local ollama)
 // is itself.
 func (s *Server) onKeys(r *http.Request, p provider.Provider, model, asked string) ([]candidate, int, string) {
+	if err := provider.RoutingFileError(); err != nil {
+		return nil, routingStatus(err), err.Error()
+	}
 	if p.Account == nil && p.Key == "" {
 		return []candidate{{p: p, model: model, rest: p.ID}}, 0, ""
 	}
@@ -749,6 +758,9 @@ func (s *Server) onKeys(r *http.Request, p provider.Provider, model, asked strin
 		if len(cs) == 0 {
 			return nil, http.StatusForbidden, keyAccountsError(keyWho, asked)
 		}
+	}
+	if len(cs) == 0 && p.HasRoutingAliases() {
+		return nil, http.StatusNotFound, "ordinary route has no available account; use a qualified model reference"
 	}
 	if len(cs) == 0 {
 		cs = []candidate{{p: p, model: model, rest: p.ID}}

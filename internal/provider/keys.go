@@ -41,11 +41,12 @@ type KeyAccount struct {
 
 // KeyInfo describes one of a provider's keys without giving it away.
 type KeyInfo struct {
-	ID     string `json:"id"` // a fingerprint, to name it in a switch
-	Name   string `json:"name,omitempty"`
-	Masked string `json:"masked"`
-	Active bool   `json:"active"` // the first, where requests go
-	On     bool   `json:"on"`     // in use: the first, or next in line
+	RoutingAlias string `json:"routingAlias,omitempty"`
+	ID           string `json:"id"` // a fingerprint, to name it in a switch
+	Name         string `json:"name,omitempty"`
+	Masked       string `json:"masked"`
+	Active       bool   `json:"active"` // the first, where requests go
+	On           bool   `json:"on"`     // in use: the first, or next in line
 
 	Protocol Protocol `json:"protocol,omitempty"` // the only one it works with
 	Weight   int      `json:"weight,omitempty"`   // its share when routing is Weighted
@@ -157,6 +158,9 @@ func (p Provider) KeyList() []KeyInfo {
 	}
 	for _, k := range p.Keys {
 		out = append(out, KeyInfo{ID: keyID(k.Key), Name: k.Name, Masked: Mask(k.Key), On: !k.Off, Protocol: k.Protocol, Weight: k.Weight, Plan: k.Plan})
+	}
+	for i := range out {
+		out[i].RoutingAlias = p.ActiveRoutingAlias(out[i].ID)
 	}
 	return out
 }
@@ -677,6 +681,12 @@ func ReplaceKey(id, keyRef, key string) (was, now string, err error) {
 		p.Key = key
 	} else {
 		p.Keys[i].Key = key
+	}
+	for name, b := range p.KeyAliases {
+		if b.KeyID == keyRef {
+			b.KeyID = now
+			p.KeyAliases[name] = b
+		}
 	}
 	moveKeyed(p.AccountModels, keyRef, now)
 	moveKeyed(p.AccountModelsAll, keyRef, now)

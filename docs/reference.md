@@ -2164,6 +2164,44 @@ skipped; add the subscription in magpie instead. OpenCode is read only when
 you open the dialog: the Providers page's automatic check leaves it out, as
 the file holds every sign-in OpenCode has. magpie never writes to it.
 
+### Choosing an account with a routing alias
+
+Open a provider in the web UI and use **Routing alias** on the account or API
+key row. This is separate from its display name. An account without an alias
+participates in ordinary provider routing. Giving it `work` makes it available
+through references such as `codex/gpt-5.5@work`; ordinary
+`codex/gpt-5.5` requests exclude it, including requests with old affinity.
+The upstream still receives `gpt-5.5`, and credentials remain in their original
+store. Qualified variants appear alongside the base model in model pickers. Use
+**Copy model reference** on an aliased account's row to copy one of its servable
+models; when several are available, choose which reference to copy.
+
+An alias is 1–32 ASCII characters, starts with a letter, and then uses letters,
+digits, `.`, `_` or `-`. Saving trims whitespace and uses lowercase. Aliases are
+unique within a provider, so another provider can also have `work`. Previously
+used names stay reserved for the same account. Rotating a key with **Change
+key** preserves its owner and aliases.
+
+A request naming an alias is restricted to that account. If it fails, magpie
+returns the failure; it does not use another account or the provider's fallback.
+For high availability, create a routing group with explicit members such as
+`p/model@work` and `q/model@backup`. A normal provider request keeps its existing
+fallback behavior, using only accounts without aliases.
+
+Changing or clearing an alias leaves old references unavailable. It does not
+rewrite saved group members or agent selections. Clearing restores the account
+to ordinary routing; update any references that should use the new alias.
+Unknown, retired or missing-account aliases fail locally.
+
+Native model IDs with `@` remain literal when listed by the provider or in its
+model picks. Numeric markers such as `@500k` and `@20260801`, and `@` inside a
+model path such as `@cf/vendor/model`, also remain native. An unlisted model
+ending in a letter-led `@suffix` is interpreted as an account alias; add a
+native ID such as `model@latest` to the provider's model list before using it.
+A new native name conflicting with a reserved alias fails as ambiguous rather
+than selecting an ordinary account. A native base can itself be qualified:
+`p/model@500k@work` selects work and sends `model@500k` upstream.
+
 ### How magpie picks an account
 
 When a subscription has several accounts on (Claude Code's or Codex's

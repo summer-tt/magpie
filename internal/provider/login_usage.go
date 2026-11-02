@@ -115,17 +115,17 @@ var errLeftAlone = errors.New("not read yet: this subscription is switched off i
 func LoginUsageShown(ctx context.Context, agent string) map[string]SubscriptionQuota {
 	if !settings.AccountDiscoveryOff() && leftAlone(agent) {
 		if logins, ok := usageLogins(agent); ok {
-			return keptLoginUsage(logins)
+			return keptLoginUsage(ctx, logins)
 		}
 	}
 	return LoginUsage(ctx, agent)
 }
 
 // keptLoginUsage is each of logins' last reading, asking no one.
-func keptLoginUsage(logins []Login) map[string]SubscriptionQuota {
+func keptLoginUsage(ctx context.Context, logins []Login) map[string]SubscriptionQuota {
 	out := map[string]SubscriptionQuota{}
 	for _, l := range logins {
-		out[l.User] = keepLast(cutShort(l, errLeftAlone), l.User)
+		out[l.User] = keepLast(ctx, cutShort(l, errLeftAlone), l.User)
 	}
 	return out
 }

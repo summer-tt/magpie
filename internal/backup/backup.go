@@ -305,6 +305,7 @@ func Collect(keys bool, app string) (Bundle, error) {
 func Secret(name string) bool { return provider.SecretHeader(name) }
 
 func withoutKeys(p provider.Provider) provider.Provider {
+	p.KeyAliases = nil
 	p.Key, p.KeyName, p.Keys, p.KeyProtocol, p.KeyWeight, p.KeyPlan = "", "", nil, "", 0, ""
 	p.BalanceToken = ""
 	p.AccessKeyID, p.SecretAccessKey = "", ""
@@ -457,7 +458,11 @@ func Restore(b Bundle, parts Parts) (Result, error) {
 	// the sign-ins first: the subscriptions the providers name are signed
 	// in to then, and aren't listed as not signed in (SignIn)
 	if parts.SignIns && b.SignIns != nil {
-		res, err := provider.RestoreSignIns(b.SignIns)
+		var selected []provider.Provider
+		if parts.Providers {
+			selected = b.Providers
+		}
+		res, err := provider.RestoreSignIns(b.SignIns, selected...)
 		if err != nil {
 			return r, fmt.Errorf("putting the sign-ins in: %w", err)
 		}

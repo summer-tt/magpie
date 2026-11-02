@@ -1102,10 +1102,13 @@ func FallbackGroup(id string) (Group, []Member, bool) {
 // nothing is left out, as the gateway passes it over, and a model met
 // again is listed where it was met first.
 func FallbackModels(p Provider) []Member {
+	if p.RoutingAlias() != "" {
+		return nil
+	}
 	var out []Member
 	seen := map[string]bool{}
 	add := func(m Member) {
-		if k := m.Provider.ID + "/" + m.Model; !seen[k] {
+		if k := m.Provider.ModelRef(m.Model); !seen[k] {
 			seen[k] = true
 			out = append(out, m)
 		}
@@ -1364,7 +1367,7 @@ func membersFound(entries []Entry, find entryOf, all []Group, g Group, off func(
 			if acct != "" {
 				acct = p.ID + "/" + acct
 			}
-			key := WithMemberAccount(WithMemberEffort(p.ID+"/"+m, effort), acct)
+			key := WithMemberAccount(WithMemberEffort(p.ModelRef(m), effort), acct)
 			here := append(slices.Clone(path), id)
 			fixed, levels := MemberLevels(effort)
 			mem := Member{ID: here[0], Path: here, Via: via, Redact: redact, Provider: p, Model: m, Effort: fixed, Levels: levels, Fast: g.IsFast(id), Ultra: g.IsUltra(id), Account: acct, At: at}

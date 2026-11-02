@@ -735,6 +735,16 @@ func IsDecider(id string) bool {
 // to the only provider that can answer it, as that provider names Jev.
 func RouteDecider(model string) (Provider, string, error) {
 	model = strings.TrimSpace(model)
+	if p, bare, handled, err := resolveRoutingAlias(model); handled {
+		if err != nil {
+			return Provider{}, "", err
+		}
+		m, ok := resolveDecideModel(p, bare)
+		if !ok {
+			return Provider{}, "", decideBadRequest("%s is not a model of %s", bare, p.Name)
+		}
+		return p, m, nil
+	}
 	if model == "" {
 		return Provider{}, "", decideBadRequest("a System One request names no model")
 	}
@@ -838,6 +848,10 @@ func decideNotFound(format string, a ...any) error {
 // from RouteDecider: 400 when the model is named badly, 404 when magpie
 // has no such Jev provider.
 func DecideRouteStatus(err error) int {
+	var routing *RoutingError
+	if errors.As(err, &routing) {
+		return routing.Status
+	}
 	var e *decideRouteError
 	if errors.As(err, &e) {
 		return e.status

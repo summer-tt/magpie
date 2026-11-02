@@ -688,9 +688,9 @@ func sealedBy(user string) candidate {
 }
 
 func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
-	compact := func(enc, acct string) (int, string, string) {
+	compact := func(token, enc, acct string) (int, string, string) {
 		t.Helper()
-		return sealedCompactAsked(t, enc, "chatgpt-token", acct)
+		return sealedCompactAsked(t, enc, token, acct)
 	}
 	account := sealedBy
 
@@ -698,7 +698,7 @@ func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
 		codexSignedIn(t, "biz@example.com") // the sign-in is me@example.com (acct-1); biz@example.com (acct-2) is on
 		nativeOn(t, "codex")
 		wroteCheckpoint("gAAAAB-sealed-by-biz", account("biz@example.com"))
-		code, body, seen := compact("gAAAAB-sealed-by-biz", "")
+		code, body, seen := compact(codexAccessToken(t), "gAAAAB-sealed-by-biz", "")
 		if code != 200 || seen != "acct-2" {
 			t.Fatalf("%d, the backend saw %q: %s", code, seen, body)
 		}
@@ -707,7 +707,7 @@ func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
 		codexSignedIn(t)
 		nativeOn(t, "codex")
 		wroteCheckpoint("gAAAAB-sealed-by-gone", account("gone@example.com"))
-		code, body, seen := compact("gAAAAB-sealed-by-gone", "")
+		code, body, seen := compact(codexAccessToken(t), "gAAAAB-sealed-by-gone", "")
 		if code != 400 || seen != "" {
 			t.Fatalf("%d, the backend saw %q: %s", code, seen, body)
 		}
@@ -721,7 +721,7 @@ func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
 		codexSignedIn(t)
 		nativeOn(t, "codex")
 		wroteCheckpoint("gAAAAB-sealed-by-me", account("me@example.com"))
-		code, body, seen := compact("gAAAAB-sealed-by-me", "")
+		code, body, seen := compact(codexAccessToken(t), "gAAAAB-sealed-by-me", "")
 		if code != 200 || seen != "" { // relayed as it came: no account id added
 			t.Fatalf("%d, the backend saw %q: %s", code, seen, body)
 		}
@@ -730,7 +730,7 @@ func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
 		codexSignedIn(t)
 		nativeOn(t, "codex")
 		wroteCheckpoint("gAAAAB-sealed-by-gone", account("gone@example.com"))
-		code, body, seen := compact("gAAAAB-sealed-by-gone", "acct-9")
+		code, body, seen := compact("chatgpt-token", "gAAAAB-sealed-by-gone", "acct-9")
 		if code != 200 || seen != "acct-9" { // relayed as it came: the header goes untouched
 			t.Fatalf("%d, the backend saw %q: %s", code, seen, body)
 		}
@@ -739,7 +739,7 @@ func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
 		codexSignedIn(t)
 		nativeOn(t, "codex")
 		wroteCheckpoint("gAAAAB-sealed-by-key", candidate{p: provider.Provider{ID: "codex", Key: "ck_test"}})
-		code, body, seen := compact("gAAAAB-sealed-by-key", "")
+		code, body, seen := compact(codexAccessToken(t), "gAAAAB-sealed-by-key", "")
 		if code != 200 || seen != "" { // relayed as it came: no account id added
 			t.Fatalf("%d, the backend saw %q: %s", code, seen, body)
 		}
@@ -751,7 +751,7 @@ func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
 		}
 		nativeOn(t, "codex")
 		wroteCheckpoint("gAAAAB-sealed-by-gone", account("gone@example.com"))
-		code, body, seen := compact("gAAAAB-sealed-by-gone", "")
+		code, body, seen := compact(codexAccessToken(t), "gAAAAB-sealed-by-gone", "")
 		if code != 400 || seen != "" {
 			t.Fatalf("%d, the backend saw %q: %s", code, seen, body)
 		}
@@ -766,7 +766,7 @@ func TestNativeCompactionCompactJudgesItsWriter(t *testing.T) {
 		}
 		nativeOn(t, "codex")
 		wroteCheckpoint("gAAAAB-sealed-by-biz", account("biz@example.com"))
-		code, body, seen := compact("gAAAAB-sealed-by-biz", "")
+		code, body, seen := compact(codexAccessToken(t), "gAAAAB-sealed-by-biz", "")
 		if code != 200 || seen != "acct-2" {
 			t.Fatalf("%d, the backend saw %q: %s", code, seen, body)
 		}

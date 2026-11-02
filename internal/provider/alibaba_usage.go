@@ -150,7 +150,7 @@ func aliPlanQuotas(ctx context.Context) []SubscriptionQuota {
 				// what routing goes by, read just now (KeyAllowance)
 				noteKeyAllowance(j.p, out[i].Windows, time.Now())
 			}
-			out[i] = keepReading(ctx, out[i], keyAllowanceTag(j.p))
+			out[i] = keepReading(ctx, out[i], keyCardTag(j.p))
 		}()
 	}
 	wg.Wait()

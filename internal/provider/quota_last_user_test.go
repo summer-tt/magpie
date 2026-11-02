@@ -22,7 +22,7 @@ func TestAccountReadingNamed(t *testing.T) {
 	later := time.Now().Add(time.Hour)
 	for _, agent := range []string{"antigravity", "claude"} {
 		l := Login{Agent: agent, User: "a@x.com"}
-		keepLast(SubscriptionQuota{Provider: loginProvider(l), User: "a@x.com", Windows: []QuotaWindow{
+		keepLast(context.Background(), SubscriptionQuota{Provider: loginProvider(l), User: "a@x.com", Windows: []QuotaWindow{
 			{Name: "5 hours", Used: 40, ResetsAt: &later, Span: 5 * time.Hour},
 		}}, "")
 		// given up on at its deadline, as loginReading does: the kept
@@ -30,7 +30,7 @@ func TestAccountReadingNamed(t *testing.T) {
 		if q := keepReading(context.Background(), cutShort(l, context.DeadlineExceeded), l.User); q.User != "a@x.com" || len(q.Windows) != 1 || q.Windows[0].Used != 40 {
 			t.Fatalf("%s deadline, kept: %+v", agent, q)
 		}
-		if q := keepLast(cutShort(l, errNotAsked), l.User); q.User != "a@x.com" || len(q.Windows) != 1 {
+		if q := keepLast(context.Background(), cutShort(l, errNotAsked), l.User); q.User != "a@x.com" || len(q.Windows) != 1 {
 			t.Fatalf("%s not asked: %+v", agent, q)
 		}
 		// an account with nothing kept says its error under its own name

@@ -133,6 +133,27 @@ store, which rides the settings part with `LANKey` and `LANKeyID`, so every
 computer holds the same one, and sharing turned on at a second computer takes
 it up rather than making another (`TestLANSharingStaysOnItsComputer`).
 
+## Routing alias ownership in provider bundles
+
+Account routing aliases travel with portable provider settings; they name
+saved login IDs and do not carry subscription credentials. A machine without
+the referenced login keeps the unresolved binding. Key alias bindings travel
+with provider keys, including retired aliases and the original owner ID.
+`withoutKeys` in [`backup.go`](../../internal/backup/backup.go) removes the
+whole `KeyAliases` registry for a keyless bundle. `provider.KeepSecrets`
+restores this computer's keys and complete key registry together.
+
+[`Restore` and `Mirror`](../../internal/provider/backup.go) merge alias owner
+history before writing provider changes. A conflicting owner for the same
+alias rejects that providers update; no partial providers file is written.
+History absent from the selected version survives as inactive reservations,
+with key rotation following that owner's current fingerprint. An older
+provider record without alias fields preserves the local registry. Clearing
+aliases uses retained inactive bindings, not omitted fields. This protects
+normal restore paths; manually deleting the registry or rewriting it with an
+older binary can still remove its history. The binding format is owned by
+[providers and accounts](providers-accounts.md#account-routing-aliases).
+
 ## Runtime and state
 
 The gateway runs sync every three minutes by default. `SetAuto` can select a
@@ -329,6 +350,50 @@ switch that anyone with the file and the passphrase can use those accounts.
   and a Restore writes none. Each computer signs in to them itself
   (`TestCollectSignInsLeavesARotatingSignInOut`,
   `TestKnownRotatingSignInsStayWithNoPluginListed`).
+- **Plugin routing owners:** `SignIns.PluginLogins` carries the real
+  `plugin:<raw provider id>` namespace, `Home` auth slot and saved ID beside
+  each credential. A label change does not create another routing owner.
+  Sync hashes remain credential-only, including for legacy peers: retaining
+  this computer's saved owner does not count as a credential edit or prevent
+  an unchanged credential from following a peer's deletion. Metadata-only
+  propagation is planned separately; apply checks the local credential and
+  owner together again, so an intervening owner change is kept. The whole
+  sign-ins part's change detection additionally hashes namespace, Home and
+  saved ID, which makes metadata-only edits reach merge and upload even when
+  the server version and credentials are unchanged. Display labels and local
+  account flags are not part of this routing identity hash.
+  Known metadata survives a merge with an older same-slot record, including
+  when its credential is unchanged. Restore also applies metadata independently
+  of credential renewal. Collection reads logins and auth under `loginsMu`;
+  apply writes owners before publishing auth and holds that lock through auth
+  publication and cache invalidation, so discovery cannot mint an interim ID.
+- **Owner conflicts:** when either the carried plugin owner or the destination
+  slot's owner has active or retired alias history, a different owner or slot
+  rejects the import. Complete metadata for unrelated, unreserved owners still
+  uses the existing account matching and later-renewal rules, retaining a
+  destination's saved owner; a new destination takes the carried owner. A
+  legacy record without metadata is refused when it cannot be matched to an
+  existing same-slot owner and that namespace has alias history. It is never
+  rebound from its label. Credentials removed by sync leave provider alias
+  history intact; a missing owner remains unavailable. Codex imports check
+  both the incoming ID and the ID baseline collision handling would save:
+  different workspaces cannot share a reserved owner. A sign-in-only import
+  whose reserved owner has no verifiable local login is refused, including
+  retired history. When provider settings and sign-ins are selected together,
+  the selected registry and source identity supply the evidence for restoring
+  that source owner onto an empty destination. Alias-free Codex ID generation
+  is unchanged.
+- **Selected incoming registry:** `CheckSignInsRouting` in
+  [`signins_carry.go`](../../internal/provider/signins_carry.go) combines local
+  owner history with the provider records actually selected for import and
+  checks real saved identities before related writes. Backup restore passes
+  these providers only when both Providers and SignIns are selected. Sync and
+  server Restore check before `Mirror`, then pass the selected providers to
+  `ApplySignIns` or `RestoreSignIns` for the fresh apply checks. A Codex owner
+  shared by different workspaces or a plugin credential whose source and
+  destination owners conflict with that registry rejects the import before
+  credential or alias-history writes. Unrelated backup parts retain their
+  existing restore behavior; this is not a transaction over a whole bundle.
 - **Sealed:** a backup or export seals them with the rest of the file. An
   automatic backup, which has no passphrase on a schedule, seals them
   alone (`SealData`) with the passphrase asked for as they are turned on,

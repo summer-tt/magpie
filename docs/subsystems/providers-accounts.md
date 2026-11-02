@@ -198,6 +198,55 @@ Account discovery can be turned off (#1535): Settings → Privacy → *Subscript
 
 A signed-in account's model list exists only at its vendor (the ChatGPT backend's `/models` for a Codex sign-in, …), so `FetchNew` asks for the lists not fetched yet. Every front end calls it at start: the window (`startBackend`, then `FetchNewSoon` behind `/api/state`), the TUI (`fetchModelsCmd` in `Init`) and `magpie serve` (#1789, reyoung: the terminal and a headless gateway had offered the built-in Cursor's fallback `auto` alone until the list was fetched by hand). Listing the accounts asks a CLI who is signed in, and a look waits `firstAsk` (3s) for that; `cursor-agent about` asks Cursor's servers and can take longer, so `FetchNew` waits for each CLI asked for the first time (`awaitIdentities` in [`cli_identity.go`](../../internal/provider/cli_identity.go)) and lists the accounts again. It reports whether an account was left without its list (failed, or waiting `newFetchRetry` after a failure): the TUI then asks again a minute later (`modelsRetry`) and `serve` loops the same way, while the window asks again from its pages. A TUI model picker open when the list arrives is filled in place (`relist`), keeping its filter and the model under the cursor. `TestFetchNewAccount` and the TUI's `TestTUIFetchesSubscriptionModels` / `TestTUIAsksAgainForAMissingList` cover it. A list fetched once is not left as it was: the magpie serving the gateway looks every hour ([`KeepAccountsListed`](../../internal/provider/account_relist.go), first two minutes after it starts) and fetches again each signed-in built-in account's list that is 45 minutes old (`accountListAge`, `relistAccounts`), so a model the vendor adds to the plan is served without Refresh or a magpie release (cliff_26651 on Discord: GPT-6.1 Terra, served to ChatGPT accounts from 10-26, missing from Codex through a magpie whose Codex list was fetched on 10-12). A plugin's accounts are `KeepPluginsListed`'s, one switched off isn't asked, and a fetch that fails keeps the list there was. `TestAccountListFollowsTheVendor` and `TestKeepAccountsListedAsks` cover it. The saved ChatGPT accounts behind the one Codex is signed in to are listed with that fetch (`codexFetchSaved`), but not each time: one with no list yet is asked at once, the others once a day (`codexSavedListAge`) and one a look (`codexSavedAtOnce`), the one asked longest ago first, and one that failed waits its day too (`codexSavedAsked`). Asking every switched-on saved account each hour was a burst of `/codex/models` calls from one address for accounts no Codex used (`TestSavedCodexListsOnceADay`). Each list is kept with the Codex version it was asked for (`catalog.SaveLiveAsked`), as the backend lists a model only to a client new enough for it; a saved account's list asked for an older Codex than magpie speaks as now, or kept with no version, is asked at the next look as one with no list, an hour after a failed try (`codexListBehind`, `codexBehindRetry`, `TestBehindListAskedAgain`); so is one fetched more than `listRound` (10 minutes) before another account's list first had a model (`catalog.LiveNewest`, `TestListOlderThanAnothersModelAskedAgain`). An account's own list (Codex's, Antigravity's) is evidence its plan lacks a model only when it can know the model: `AccountsFor` routes over, as unknown, an account whose list was fetched more than `listRound` before another account's list first had the model (lists fetched in one look are the plans' difference; `catalog.LiveSince`, each model's first save kept from save to save) or, for ChatGPT, was asked for an older Codex (`Account.listLags`; wudao_85256 on Discord: the second of two Plus accounts was "its plan doesn't list gpt-6.1-sol" and never failed over to; `TestStaleAccountListIsNotAPlanWithoutTheModel`). Every call magpie makes about a ChatGPT account, not only `/codex/models` and `/responses` (`codexSign`), carries Codex's `originator` and User-Agent (`codexClientHeaders`, codex-rs `default_headers`): `/wham/usage`, the reset credits and their use (`codexAccountHeaders`), and the token endpoint's refresh and sign-in exchange. The refresh's body is codex-rs's: `client_id`, `grant_type`, `refresh_token` and a `refresh_reason` (`proactive_expiry`, `scheduled` from the keep-alive, `unauthorized_recovery` after a 401, `forced`), with no `scope` (`TestCodexAccountCallsGoAsCodex`, `TestCodexRefreshSaysWhy`).
 
+## Account routing aliases
+
+The shared `readProviderState` reader distinguishes recovered display data from
+the current file's health. `load` and `FileError` retain the existing successful
+backup recovery behavior. `RoutingFileError`, alias setters and held dispatch
+checks reject an unreadable current file even when a backup can be displayed;
+its older metadata cannot prove that an account belongs to the ordinary pool.
+
+
+An account's routing alias selects that account through a model reference such
+as `codex/gpt-5.5@work`. It is separate from `AccountNames`, which changes only
+the displayed name. The registry and resolver live in
+[`routing_aliases.go`](../../internal/provider/routing_aliases.go):
+`AccountAliases` retains the saved login ID, and `KeyAliases` retains an
+immutable `OwnerID` with the current key fingerprint in `KeyID`. An inactive
+binding reserves its alias for the same owner. `ReplaceKey` moves `KeyID` for
+both active and retired bindings; removing a key keeps those reservations.
+Plugin routing identities use the saved `plugin:<raw provider id>` slot,
+including when the vendor changes the account's displayed label.
+
+The setters trim and lowercase an alias, accepting
+`[a-z][a-z0-9._-]{0,31}`. An empty value retires the owner's active alias.
+Renaming or clearing an alias leaves old model references unavailable; it does
+not rewrite groups or agent picks. The same owner can restore a retired name;
+another owner cannot claim it. The setters serialize their registry edits and
+write only provider metadata, using the original credentials in place. Invalid
+syntax returns 400, a missing owner returns 404, and owner or native-model
+conflicts return 409; a refusal does not change the saved file. Native suffix
+conflicts use the resolver's lowercase suffix comparison, while the native
+model's base and spelling remain intact.
+
+`ResolveModel` returns a provider request view carrying the selected alias and
+account, plus the plain upstream model ID. `Resolve` remains the boolean
+adapter. Native model IDs listed in `Available` or the user's picks keep their
+literal `@`; numeric suffixes such as `@500k` and `@20260801` also remain native.
+Only an `@` after the last slash can qualify an account. An unknown alphabetic
+suffix fails locally. A native name newly conflicting with a reserved alias
+fails as ambiguous, so refreshing a list cannot redirect an old reference.
+A qualified reference cannot enable generation on a Usage only provider
+(`ServesNone`).
+
+`Catalog` and `Served` derive qualified entries from base entries without
+adding them to vendor model lists or automatic group matching. A derived
+`Entry` has `RoutingAlias` and `BaseID`, retains the base `Model` and model
+capabilities, and carries the account constraint in its provider view. See
+[gateway routing](gateway-routing.md) for candidate and fallback semantics,
+[agent wiring](agent-wiring.md) for configuration IDs, and
+[sync and backup](sync-backup.md) for owner history during restore.
+
 ## Runtime path
 
 1. **Add.** The Providers page adds a key provider through `Add` or `Save`, or an account through `StartSignIn`. An agent signed in on its own is found by `Accounts` with no step from the user.
