@@ -88,9 +88,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await browser.close();
       });
       await page.goto("http://magpie.test/?view=routing");
-      // a browser started cold draws the days late
-      await page.locator(".rt-day").nth(1).waitFor({ state: "visible", timeout: 15000 });
-      await page.locator(".rt-day").nth(1).click();
+      // a browser started cold draws the days late. The group-by bar reuses
+      // .rt-day too, so stay in the day bar: with this fixture's one history
+      // day, Live is pressed and that one day ("day" above) is the bar's one
+      // unpressed day button
+      const historyDay = page.locator('.rt-days .rt-day:not(.rt-day-more)[aria-pressed="false"]');
+      await historyDay.waitFor({ state: "visible", timeout: 15000 });
+      assert.equal(await historyDay.count(), 1, "the fixture's one history day");
+      await historyDay.click();
       await page.locator(".rt-req").nth(ups.length - 1).waitFor();
 
       // the list: the one passed on says where, whole, inside its row
