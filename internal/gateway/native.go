@@ -102,6 +102,10 @@ func (s *Server) native(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusForbidden, fmt.Sprintf("The gateway key %q is held to some models, accounts or a spend limit, which magpie can't hold a vendor's own API to: use /v1/images/generations and /v1/videos, which pass on the vendor's own fields too", k.KeyName))
 		return
 	}
+	if err := provider.RoutingFileError(); err != nil {
+		fail(http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	found, err := provider.Find(id)
 	if err != nil || !found.On() || found.DecideOnly() {
 		fail(http.StatusNotFound, fmt.Sprintf("magpie has no provider %q turned on", id))
@@ -172,6 +176,11 @@ func (s *Server) nativeArk(w http.ResponseWriter, r *http.Request, p provider.Pr
 	if a := r.Header.Get("Accept"); a != "" {
 		req.Header.Set("Accept", a)
 	}
+	if err := routingSendError(p); err != nil {
+		fail(http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	req = routingRequest(req, p)
 	stampUA(ctx, p, req.Header)
 	if err := p.Sign(ctx, req, provider.Chat, body); err != nil {
 		fail(http.StatusBadGateway, err.Error())
@@ -433,6 +442,11 @@ func (s *Server) nativeAny(w http.ResponseWriter, r *http.Request, p provider.Pr
 			req.Header[k] = append([]string(nil), vs...)
 		}
 	}
+	if err := routingSendError(p); err != nil {
+		fail(http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	req = routingRequest(req, p)
 	stampUA(ctx, p, req.Header)
 	if err := p.Sign(ctx, req, proto, body); err != nil {
 		fail(http.StatusBadGateway, err.Error())

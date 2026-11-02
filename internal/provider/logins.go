@@ -40,12 +40,14 @@ import (
 
 // Login is a remembered subscription account, without its secrets.
 type Login struct {
-	Agent  string    `json:"agent"`
-	User   string    `json:"user"`
-	Plan   string    `json:"plan,omitempty"`
-	Seen   time.Time `json:"seen"`
-	Active bool      `json:"active"` // the agent is signed in to this one now
-	On     bool      `json:"on"`     // in use: the active one, or next in line
+	ID           string    `json:"id,omitempty"`
+	RoutingAlias string    `json:"routingAlias,omitempty"`
+	Agent        string    `json:"agent"`
+	User         string    `json:"user"`
+	Plan         string    `json:"plan,omitempty"`
+	Seen         time.Time `json:"seen"`
+	Active       bool      `json:"active"` // the agent is signed in to this one now
+	On           bool      `json:"on"`     // in use: the active one, or next in line
 	// Lapsed says the vendor refused to refresh a saved account's sign-in:
 	// it has to be signed in again before it can be used.
 	Lapsed string `json:"lapsed,omitempty"`

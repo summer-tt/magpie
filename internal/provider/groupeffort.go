@@ -92,7 +92,7 @@ func MemberLevels(effort string) (fixed string, levels []string) {
 // Spelled is the member's model as the group names it: with the effort it
 // is fixed at, or the levels it follows the agent among.
 func (m Member) Spelled() string {
-	return WithMemberEffort(m.Provider.ID+"/"+m.Model, cmp.Or(m.Effort, strings.Join(m.Levels, "+")))
+	return WithMemberEffort(m.Provider.ModelRef(m.Model), cmp.Or(m.Effort, strings.Join(m.Levels, "+")))
 }
 
 // isModel reports whether id is a model a provider has as it is spelled,

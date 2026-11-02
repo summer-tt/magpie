@@ -927,10 +927,13 @@ func FallbackGroup(id string) (Group, []Member, bool) {
 // nothing is left out, as the gateway passes it over, and a model met
 // again is listed where it was met first.
 func FallbackModels(p Provider) []Member {
+	if p.RoutingAlias() != "" {
+		return nil
+	}
 	var out []Member
 	seen := map[string]bool{}
 	add := func(m Member) {
-		if k := m.Provider.ID + "/" + m.Model; !seen[k] {
+		if k := m.Provider.ModelRef(m.Model); !seen[k] {
 			seen[k] = true
 			out = append(out, m)
 		}
@@ -1112,7 +1115,7 @@ func membersFound(entries []Entry, find entryOf, all []Group, g Group, off func(
 			}
 			model, effort := memberEffortIn(entries, id)
 			p, m, ok := resolveIn(entries, model)
-			key := WithMemberEffort(p.ID+"/"+m, effort)
+			key := WithMemberEffort(p.ModelRef(m), effort)
 			if !ok || unpicked(find, p, m) && (also == nil || !also(p, m)) {
 				continue // none serves it, or the user unchecked it (#3911)
 			}

@@ -566,12 +566,16 @@ func smallReady(p provider.Provider, keep func(catalog.Model) bool, from provide
 // of each of its models before one was picked: a quarter of
 // AutoVision's allocations.
 func smallReadyOf(p provider.Provider, cs []smallCand, from provider.Protocol) (smallCand, bool) {
+	return smallReadyWithHealth(p, cs, from, provider.RoutingFileError())
+}
+
+func smallReadyWithHealth(p provider.Provider, cs []smallCand, from provider.Protocol, health error) (smallCand, bool) {
 	if len(cs) == 0 {
 		return smallCand{}, false
 	}
 	now := time.Now()
 	for _, c := range cs {
-		if _, spent := spentModel(p, c.id, from, now); !spent {
+		if _, spent := spentModelWithHealth(p, c.id, from, now, health); !spent {
 			return c, true
 		}
 	}
@@ -636,7 +640,15 @@ func smallCands(p provider.Provider, keep func(catalog.Model) bool) []smallCand 
 // smallKept is the providers' smallCands, kept by provider.StampNow:
 // AutoVision and the searcher's pick built every provider's list again
 // each time they were asked, for every agent's list of models.
-var smallKept stamped[smallKey, []smallCand]
+var smallKept stamped[smallKey, smallCandidates]
+
+// Health here belongs only to the model-list preview at its catalog stamp.
+// Allowance/rest are still checked each time. Actual requests never use this
+// snapshot to authorize an account or to skip their current-file checks.
+type smallCandidates struct {
+	models []smallCand
+	health error
+}
 
 // smallKey is what smallCands are of: a provider (an account's, by who is
 // signed in) and which keep.
@@ -646,12 +658,14 @@ type smallKey struct {
 
 // keptSmallCands is smallCands, kept (smallKept); kind names keep, which
 // must hold of a model by the model and the provider alone.
-func keptSmallCands(p provider.Provider, kind string, keep func(catalog.Model) bool) []smallCand {
+func keptSmallCands(p provider.Provider, kind string, keep func(catalog.Model) bool) smallCandidates {
 	k := smallKey{kind: kind, id: p.ID}
 	if a := p.Account; a != nil {
 		k.agent, k.user, k.plan, k.home = a.Agent, a.User, a.Plan, a.Home
 	}
-	return smallKept.get(k, func() []smallCand { return smallCands(p, keep) })
+	return smallKept.get(k, func() smallCandidates {
+		return smallCandidates{models: smallCands(p, keep), health: provider.RoutingFileError()}
+	})
 }
 
 // smallWords name a vendor's small tier: GPT-6's is Luna, the list has
@@ -723,7 +737,8 @@ func searcherReady(p provider.Provider) (string, bool) {
 	if googleAccount(p) || geminiKeySearches(p) || p.IsRemoteMagpie() || partSearcher(p) {
 		keep = func(m catalog.Model) bool { return searchableModel(p, m.ID) }
 	}
-	c, ready := smallReadyOf(p, keptSmallCands(p, "search", keep), provider.Anthropic)
+	preview := keptSmallCands(p, "search", keep)
+	c, ready := smallReadyWithHealth(p, preview.models, provider.Anthropic, preview.health)
 	return c.id, ready
 }
 
@@ -1207,7 +1222,7 @@ func (s *Server) searchWith(ctx context.Context, p provider.Provider, model, que
 // off.
 func searchBody(p provider.Provider, model, query, effort string) map[string]any {
 	q := map[string]any{
-		"model": p.ID + "/" + model, "max_tokens": replyRoom(4096, effort), "stream": false, "system": searchSystem,
+		"model": p.ModelRef(model), "max_tokens": replyRoom(4096, effort), "stream": false, "system": searchSystem,
 		"messages": []map[string]any{{"role": "user", "content": "Search the web for: " + query}},
 		"tools":    []map[string]any{{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}},
 	}

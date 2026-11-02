@@ -85,21 +85,23 @@ type modelJSON struct {
 }
 
 type providerJSON struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Icon      string            `json:"icon"`
-	IconFrom  string            `json:"iconFrom,omitempty"` // the address Icon was fetched from (provider.IconFrom)
-	Preset    string            `json:"preset"`
-	Host      string            `json:"host"`
-	Chat      string            `json:"chat"`
-	Responses string            `json:"responses"`
-	Anthropic string            `json:"anthropic"`
-	Gemini    string            `json:"gemini,omitempty"` // a Gemini API's base (#1346)
-	Decide    string            `json:"decide,omitempty"` // a decision API: it only routes groups
-	Catalog   string            `json:"catalog"`
-	Website   string            `json:"website"`
-	KeysURL   string            `json:"keysUrl"`
-	Headers   map[string]string `json:"headers,omitempty"`
+	// Servable qualified references by stable account/key ID, for copying.
+	RoutingModels map[string][]string `json:"routingModels"`
+	ID            string              `json:"id"`
+	Name          string              `json:"name"`
+	Icon          string              `json:"icon"`
+	IconFrom      string              `json:"iconFrom,omitempty"`
+	Preset        string              `json:"preset"`
+	Host          string              `json:"host"`
+	Chat          string              `json:"chat"`
+	Responses     string              `json:"responses"`
+	Anthropic     string              `json:"anthropic"`
+	Gemini        string              `json:"gemini,omitempty"` // a Gemini API's base (#1346)
+	Decide        string              `json:"decide,omitempty"` // a decision API: it only routes groups
+	Catalog       string              `json:"catalog"`
+	Website       string              `json:"website"`
+	KeysURL       string              `json:"keysUrl"`
+	Headers       map[string]string   `json:"headers,omitempty"`
 	// JSON fields added to each request's body (provider.ExtraBody, #1604)
 	ExtraBody provider.ExtraBody `json:"extraBody,omitempty"`
 	// headers of the vendor's reply passed on (provider.ReplyHeaders, #4145)
@@ -424,6 +426,8 @@ type stepPlanJSON struct {
 }
 
 type accountJSON struct {
+	ID           string `json:"id"`
+	RoutingAlias string `json:"routingAlias,omitempty"`
 	provider.Account
 	Agent string `json:"agent"`     // the agent's id
 	Name  string `json:"agentName"` // the agent's name, for "from Codex CLI's sign-in"
@@ -875,7 +879,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		}
 	}
 	if a := p.Account; a != nil {
-		out.Account = &accountJSON{Account: *a, Agent: a.Agent}
+		out.Account = &accountJSON{Account: *a, Agent: a.Agent, ID: p.RoutingID(), RoutingAlias: p.ActiveRoutingAlias(p.RoutingID())}
 		out.Account.Name, out.Account.Icon = accountLabel(p)
 		out.Account.Logins = provider.Logins(a.Agent)
 		if a.Agent == "claude" {
@@ -892,6 +896,22 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 	}
 	if p.Account != nil {
 		out.AccountRests = accountRests(p.ID)
+	}
+	if out.Account != nil {
+		for i := range out.Account.Logins {
+			l := &out.Account.Logins[i]
+			l.ID = p.RoutingIDOf(l.User)
+			l.RoutingAlias = p.ActiveRoutingAlias(l.ID)
+		}
+	}
+	if p.HasRoutingAliases() {
+		out.RoutingModels = map[string][]string{}
+		for _, e := range provider.Served() {
+			if e.Provider.ID == p.ID && e.RoutingAlias != "" {
+				owner := e.Provider.RoutingAccountID()
+				out.RoutingModels[owner] = append(out.RoutingModels[owner], e.ID)
+			}
+		}
 	}
 	exposed := map[string]bool{}
 	exposedList := ls.Exposed
@@ -1269,6 +1289,19 @@ func providersState() providersJSON {
 
 // failMove is fail with why the move failed, for the page to say it in
 // its reader's language.
+// Alias setters preserve their reference-error status without changing the
+// existing errors returned by the other provider actions.
+func failRoutingAlias(rw http.ResponseWriter, err error) {
+	var routing *provider.RoutingError
+	if !errors.As(err, &routing) {
+		fail(rw, err)
+		return
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(routing.Status)
+	json.NewEncoder(rw).Encode(map[string]string{"error": err.Error()})
+}
+
 func failMove(rw http.ResponseWriter, err error) {
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(http.StatusBadRequest)
@@ -2088,6 +2121,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				if old != nil {
 					// the other keys are kept apart, in the Accounts list
 					in.Keys = old.Keys
+					in.AccountAliases, in.KeyAliases = old.AccountAliases, old.KeyAliases
 					// the editor's picks, or as they were
 					if req.Routing == nil {
 						in.Routing = old.Routing
@@ -2289,6 +2323,12 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				fail(rw, err)
 				return
 			}
+		case "accountalias":
+			if err := provider.SetAccountRoutingAlias(in.ID, req.Account, req.Alias); err != nil {
+				failRoutingAlias(rw, err)
+				return
+			}
+			agent.SyncCatalogSoon()
 		case "accountname":
 			if err := provider.SetAccountName(in.ID, req.Account, req.Alias); err != nil {
 				fail(rw, err)
@@ -2731,11 +2771,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 	// A provider's several keys: add one, put one in use, name or remove it.
 	mux.HandleFunc("POST /api/keys/{action}", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
-			ID, Key, Name, Ref string
-			Refs               []string
-			Protocol           provider.Protocol
-			Weight             int
-			Plan               string
+			ID, Key, Name, Ref, Alias string
+			Refs                      []string
+			Protocol                  provider.Protocol
+			Weight                    int
+			Plan                      string
 		}
 		var added, had, removed int
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -2772,6 +2812,13 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		case "remove-many":
 			// the keys picked in a long list, or every dead one, at once
 			moved, err = agent.Reseat(func() (err error) { removed, err = provider.RemoveKeys(in.ID, in.Refs); return err })
+		case "alias":
+			err = provider.SetKeyRoutingAlias(in.ID, in.Ref, in.Alias)
+			if err != nil {
+				failRoutingAlias(rw, err)
+				return
+			}
+			agent.SyncCatalogSoon()
 		case "rename":
 			err = provider.RenameKey(in.ID, in.Ref, in.Name)
 		case "replace":

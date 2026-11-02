@@ -852,6 +852,9 @@ func drawingGroup(asked string, p provider.Provider, model string) (provider.Gro
 func groupToMake(asked string, p provider.Provider, model string, find func(ref string) (provider.Group, []provider.Member, bool)) (provider.Group, []provider.Member, bool) {
 	ref := asked
 	if !provider.IsGroupRef(ref) {
+		if p.RoutingAlias() != "" {
+			return provider.Group{}, nil, false
+		}
 		gid, ok := provider.GroupFor(ref)
 		if !ok {
 			return provider.Group{}, nil, false
@@ -884,7 +887,7 @@ func (s *Server) drawingTries(g provider.Group, ms []provider.Member, keeps map[
 	}
 	byRef := map[string]provider.Member{}
 	for _, m := range ms {
-		if ref := m.Provider.ID + "/" + m.Model; byRef[ref].Model == "" {
+		if ref := m.Provider.ModelRef(m.Model); byRef[ref].Model == "" {
 			byRef[ref] = m
 		}
 	}
@@ -900,10 +903,10 @@ func (s *Server) drawingTries(g provider.Group, ms []provider.Member, keeps map[
 	}
 	cs, _ := s.planGroup(g.Live(), ms, provider.Chat)
 	for _, c := range cs {
-		add(c.p.ID + "/" + c.model)
+		add(c.p.ModelRef(c.model))
 	}
 	for _, m := range ms {
-		add(m.Provider.ID + "/" + m.Model)
+		add(m.Provider.ModelRef(m.Model))
 	}
 	return out
 }
@@ -1172,6 +1175,9 @@ func answersInImages(p provider.Provider, model string) bool {
 // one only another lists; with every key or account set not to serve the
 // model, it is refused with why, as a chat is.
 func (s *Server) drawOnAccounts(ctx context.Context, r *http.Request, p provider.Provider, model string, d drawing) (provider.Provider, drawn, int, time.Time, error) {
+	if err := provider.RoutingFileError(); err != nil {
+		return p, drawn{}, routingStatus(err), time.Time{}, err
+	}
 	if p.Account == nil && p.Key == "" {
 		// no key and no account (a local ollama): nothing to go over
 		tried := sideOf(ctx).try(candidateOf(p, model))
@@ -1218,6 +1224,9 @@ func (s *Server) drawOnAccounts(ctx context.Context, r *http.Request, p provider
 	if len(cs) == 0 && len(barred) > 0 {
 		// every key or account is set not to serve the model (#474)
 		return p, drawn{}, http.StatusForbidden, time.Time{}, errors.New(barredError(d.Model, barredOf(barred, q, false, provider.Chat, nil)))
+	}
+	if len(cs) == 0 && p.HasRoutingAliases() {
+		return p, drawn{}, http.StatusNotFound, time.Time{}, errors.New("ordinary route has no available account; use a qualified model reference")
 	}
 	if len(cs) == 0 {
 		cs = []candidate{{p: p, model: model, rest: p.ID}}
@@ -1414,6 +1423,14 @@ func (s *Server) sendWith(ctx context.Context, p provider.Provider, method, url,
 	}
 	for k, v := range extra {
 		req.Header[k] = v
+	}
+	// A generation is a new spend. Polling an existing image/video resource
+	// keeps its creating key even after an alias changes.
+	if method == http.MethodPost && !p.RoutingCurrent() {
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("routing account is no longer available for %s", p.ID)
+	}
+	if method == http.MethodPost {
+		req = routingRequest(req, p)
 	}
 	asked := time.Now()
 	res, err := p.Do(s.client, req) // a plugin's through the plugin

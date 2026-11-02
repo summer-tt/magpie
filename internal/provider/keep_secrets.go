@@ -22,7 +22,14 @@ func SecretHeader(name string) bool { return secretHeader.MatchString(name) }
 // and Tencent plan cards' access keys on this computer. A key of its own
 // is another account's, whose access key this one's isn't.
 func KeepSecrets(in, here Provider, keyless bool) Provider {
+	if in.AccountAliases == nil {
+		in.AccountAliases = maps.Clone(here.AccountAliases)
+	}
+	if in.KeyAliases == nil {
+		in.KeyAliases = maps.Clone(here.KeyAliases)
+	}
 	if keyless {
+		in.KeyAliases = maps.Clone(here.KeyAliases)
 		in.Key, in.KeyName, in.Keys, in.KeyProtocol, in.KeyWeight, in.KeyPlan = here.Key, here.KeyName, here.Keys, here.KeyProtocol, here.KeyWeight, here.KeyPlan
 		// the headers a copy without keys left out, in a map of its own:
 		// in's may be shared with the list it came in

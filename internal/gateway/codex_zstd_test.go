@@ -91,8 +91,13 @@ func textTurn(n int) string {
 }
 
 // codexPostZstd posts body to the Codex backend path compressed, as Codex
-// sends it.
+// sends it, with the synthetic bearer the other zstd turns use.
 func codexPostZstd(t *testing.T, path, body string) (int, string) {
+	return codexPostZstdToken(t, path, body, "chatgpt-token")
+}
+
+// codexPostZstdToken is codexPostZstd signed with token.
+func codexPostZstdToken(t *testing.T, path, body, token string) (int, string) {
 	t.Helper()
 	e, _ := zstd.NewWriter(nil)
 	z := e.EncodeAll([]byte(body), nil)
@@ -100,7 +105,7 @@ func codexPostZstd(t *testing.T, path, body string) (int, string) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", CodexPath+path, bytes.NewReader(z))
 	req.Header.Set("Content-Encoding", "zstd")
-	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("chatgpt-account-id", "acct-1")
 	New().Handler().ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
@@ -213,7 +218,7 @@ func TestCodexCompactAndAPIKeyStayPlain(t *testing.T) {
 	zstdTurns(t)
 	codexSignedIn(t)
 	got, mu := turnsBackend(t, 0)
-	codexPostZstd(t, "/responses/compact", `{"model":"gpt-6-luna","input":"hi"}`)
+	codexPostZstdToken(t, "/responses/compact", `{"model":"gpt-6-luna","input":"hi"}`, codexAccessToken(t))
 	mu.Lock()
 	if len(*got) != 1 || (*got)[0].path != "/backend-api/codex/responses/compact" || (*got)[0].encoding != "" {
 		t.Errorf("compact went %+v, want plain", *got)

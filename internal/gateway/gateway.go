@@ -1821,6 +1821,11 @@ func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, provider.Anthropic, 400, err.Error())
 		return
 	}
+	var routeOK bool
+	r, routeOK = constrainRouting(w, r, provider.Anthropic, body)
+	if !routeOK {
+		return
+	}
 	named := unprefixed(model)
 	if m := claudeTierStandIn(r, agentOf(r), model); m != "" {
 		model = m // counted on the model the request will go to
@@ -1833,6 +1838,9 @@ func (s *Server) countTokens(w http.ResponseWriter, r *http.Request) {
 	pick := desktopSubagentPick(r, agentOf(r), named, id, body)
 	if pick.Moved() {
 		id = pick.To
+	}
+	if ref := constrainedRef(r); ref != "" {
+		id = ref
 	}
 	p, model, ok := provider.Resolve(id)
 	// a gateway key held to some models (#882) counts no tokens on one it
@@ -2017,6 +2025,11 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 		// Qoder 1.1.82 and later name no session: the one of its own
 		// session files the request holds the prompts of (qoder_session.go)
 		r = qoderSession(r, from, body)
+		var routeOK bool
+		r, routeOK = constrainRouting(w, r, from, body)
+		if !routeOK {
+			return
+		}
 		// a Claude Code Message Thread magpie keeps no history for: sent
 		// again whole, without it (message_threads.go, #2480)
 		if from == provider.Anthropic && namesThread(body) {
@@ -2026,7 +2039,7 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 		// a thread Codex started on magpie, on one of Codex's own models
 		// magpie serves nothing for: on Codex's own sign-in, as the
 		// ChatGPT backend's route sends it (codexOwnOffMagpie)
-		if from == provider.Responses {
+		if from == provider.Responses && constrainedRef(r) == "" {
 			if r2, why := codexOwnOffMagpie(r, body, model); r2 != nil {
 				s.codexBackend(w, r2)
 				return
@@ -2071,18 +2084,30 @@ func (s *Server) handle(from provider.Protocol) http.HandlerFunc {
 		// here (#743)
 		if from == provider.Responses {
 			if to := codexTitlesTo(r.Header, body, true, nil); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexTitle(w, r, body, to)
 				return
 			}
 			if to := codexDescriptionsTo(r.Header, body, true, nil); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexDescription(w, r, body, to)
 				return
 			}
 			if to := codexSummariesTo(r.Header, body, true, nil); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexSummary(w, r, body, to)
 				return
 			}
 			if to := codexPredictionsTo(r.Header, body, true, nil); to != "" {
+				if ref := constrainedRef(r); ref != "" {
+					to = ref
+				}
 				s.codexPrediction(w, r, body, to)
 				return
 			}
@@ -2138,6 +2163,10 @@ func (s *Server) gemini(w http.ResponseWriter, r *http.Request) {
 	case "streamGenerateContent":
 		stream = true
 	case "countTokens":
+		if _, _, err := provider.ResolveModel(model); err != nil && (hasAliasIntent(model) || provider.RoutingFileError() != nil) {
+			writeError(w, provider.Gemini, routingStatus(err), err.Error())
+			return
+		}
 		// a gateway key held to some models (#882) counts no tokens on one
 		// it may not use, as it would be refused serving it
 		if countHeld(w, r, provider.Gemini, model) {
@@ -2196,6 +2225,11 @@ func estimate(req *Request) int {
 
 // serve routes one parsed-enough request to its provider.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Protocol, body []byte) {
+	var routeOK bool
+	r, routeOK = constrainRouting(w, r, from, body)
+	if !routeOK {
+		return
+	}
 	start := time.Now()
 	// a client's "off" is magpie's none, for every route and check below
 	// that reads the body's effort (plugins#334)
@@ -2434,7 +2468,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	}
 	// any Claude Code subagent's turn, moved or not, for the Routing page's tag
 	subagentID := subagentTurnOf(r, call.Kind, body, desktopPick != nil || subagentEffort != "")
-	p, model, ok := provider.Resolve(asked)
+	if ref := constrainedRef(r); ref != "" {
+		asked = ref
+	}
+	p, model, resolveErr := provider.ResolveModel(asked)
+	ok := resolveErr == nil
+	if resolveErr != nil && (hasAliasIntent(asked) || provider.RoutingFileError() != nil) {
+		writeError(w, from, routingStatus(resolveErr), resolveErr.Error())
+		turnedAway()
+		return
+	}
 	// a model the user disabled (#1867) — asked by its id, the model a
 	// sub-agent was put on, a group with every model in it disabled — is
 	// refused here, before anything is sent anywhere; a group with one
@@ -5541,6 +5584,9 @@ func (s *Server) forward(ctx context.Context, p provider.Provider, to provider.P
 
 // forwardOnce is one request to the provider, as forward makes it.
 func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provider.Protocol, path string, body []byte, in http.Header) (*http.Response, error) {
+	if !p.RoutingCurrent() {
+		return nil, fmt.Errorf("routing account is no longer available for %s", p.ModelRef(modelOf(body)))
+	}
 	reqCtx := ctx
 	ctx = s.metered(p.Via(ctx), p, "")
 	body = deepseekToolPatterns(p, to, body)
@@ -5828,44 +5874,46 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 		// sent plain, ChatGPT answered a 1.1 MB one 503 (ylorn on X)
 		sent = provider.CodexCompressed(req, body)
 	}
-	// the bytes go on the wire whether the vendor answers or not, counted
-	// for the request's ledger row (#4456)
-	sentUp(ctx, sent, len(body))
-	// a request asked again in the same ask (RetryOneAuth and the others
-	// below) goes on the wire again too, as long as it went
-	again := func(r *http.Request) (*http.Response, error) {
+	// Every attempt rechecks its selected account before going on the wire.
+	send := func(r *http.Request) (*http.Response, error) {
+		if err := routingSendError(p); err != nil {
+			if r.Body != nil {
+				r.Body.Close()
+			}
+			return nil, err
+		}
 		n := sent
 		if r.ContentLength > 0 {
 			n = int(r.ContentLength)
 		}
+		// Count the bytes sent again by each retry too (#4456).
 		sentUp(ctx, n, len(body))
-		res, err := p.Do(s.client, r)
+		res, err := p.Do(s.client, routingRequest(r, p))
 		return gotDown(ctx, res), err
 	}
-	res, err := p.Do(s.client, req)
-	// what comes back is counted as it is read, as what went is (#4456)
-	res = gotDown(ctx, res)
+	res, err := send(req)
 	if err == nil && res.StatusCode >= 400 && provider.OpenCodeURL(req.URL.String()) {
 		logOpenCodeRefusal(p, req, res.StatusCode)
 	}
 	if err == nil && to == provider.Anthropic {
 		// a vendor that takes the key in x-api-key or Authorization
 		// alone, refusing both (Aloha on Discord): asked again with one
-		res, err = provider.RetryOneAuth(p, req, res, again)
+		res, err = provider.RetryOneAuth(p, req, res, send)
 	}
 	if err == nil && to == provider.Chat {
 		// a GLM Coding Plan's key at Zhipu's or Z.ai's pay-as-you-go
 		// endpoint, refused there for want of a balance (1113): asked at
 		// the plan's endpoint, and the provider moved there when it serves
 		// it; else the refusal says what to change (@cleverpigo on X)
-		res, err = provider.RetryZhipuCoding(p, req, res, again)
+		res, err = provider.RetryZhipuCoding(p, req, res, send)
 	}
-	if err == nil && provider.OpenCodeURL(req.URL.String()) {
+	if err == nil && p.RoutingAlias() == "" && provider.OpenCodeURL(req.URL.String()) {
+		// A qualified selection keeps its bound key; Zen's retry uses a public key.
 		// a model OpenCode Go answers "Model is unavailable": one of Zen's
 		// free models asked at Zen's free tier, signed out as OpenCode
 		// asks it; else the refusal says where it is served (51bit.eth on
 		// Discord)
-		res, err = provider.RetryOpenCodeFreeOnZen(p, to, req, res, again)
+		res, err = provider.RetryOpenCodeFreeOnZen(p, to, req, res, send)
 	}
 	if err != nil {
 		return res, err

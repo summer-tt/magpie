@@ -2778,6 +2778,7 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .acc .text.quiet { opacity: 0; transition: opacity .15s; }
 .acc:hover .text.quiet, .acc.held .text.quiet { opacity: 1; }
 .acc .text.quiet:focus-visible { opacity: 1; }
+.acct-routing-alias.set > .text.quiet, .acct-routing-alias:focus-within > .text.quiet { opacity: 1; }
 /* an account signed out (#1363) shows its Remove without a hover: it is
    one of the two ways out of that state, beside Sign in again */
 .acc.signed-out .text.quiet { opacity: 1; }
@@ -2901,6 +2902,9 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
    same edge. What is set shows on it; the rest waits under ⋯ on a line
    of its own, so nothing on it takes room it doesn't show */
 .acc-line { flex: 1 0 100%; display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 22px; }
+/* The empty spacer needs no gaps of its own; it still grows to keep
+   the trailing controls at the right edge when there is room. */
+.acc-line > .grow { margin: 0 -9px; }
 .acc-line > .plan { flex: 0 3 auto; min-width: 3em; overflow: hidden; text-overflow: ellipsis; }
 .acc-line > :not(.acct-who, .n, .plan, .grow, .amodels, .acap, .alane, .text, .using) { flex-shrink: 0; }
 .acc-line > .using, .acc-line > .text { white-space: nowrap; }
@@ -2954,6 +2958,30 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
    gap before it too (#892) */
 .accts.keys .acc > :is(.alane, .aspend):not(.set):not(.open):not(:focus-visible) { padding: 0; box-shadow: none; background: none; }
 .accts.keys .acc:not(:hover):not(.held) > :is(.alane, .aspend):not(.set):not(.open):not(:focus-visible) { margin-left: -9px; }
+/* The empty alias stays clickable without a hover. Its compact button
+   leaves room for the name. */
+.acc-line > .acct-routing-alias:not(.set) > button,
+.accts.keys .acc > .acct-routing-alias:not(.set) > button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; opacity: 1; font-size: 0; }
+.acc-line > .acct-routing-alias:not(.set) > button::before,
+.accts.keys .acc > .acct-routing-alias:not(.set) > button::before { content: "@"; font-size: 12px; }
+/* The account line already uses its width: reclaim the new alias's gaps
+   without overlapping controls; only an unset alias shortens the plan. */
+.acc-line > .acct-routing-alias:not(.set) { margin-left: -9px; margin-right: -9px; }
+.acc-line > .acct-routing-alias:not(.set) ~ .plan { min-width: 2.2em; }
+/* The empty alias's 22px must not cut a key's masked value: the value
+   keeps its whole text, on hover too, and a control that no longer fits
+   beside it goes under the row's first line, as the row's other controls
+   do. */
+.accts.keys .acc > .acct-routing-alias:not(.set) ~ .plan { min-width: max-content; }
+/* An alias and its editor get a line of their own inside the account.
+   Copy keeps its full hit area; only the alias's visible text may shorten. */
+.acc-line.alias { flex-wrap: wrap; row-gap: 4px; }
+.acc-line.alias > .acct-routing-alias { order: 1; flex: 1 0 100%; display: flex; align-items: center; gap: 4px; min-width: 0; margin: 0; }
+.acc-line.alias > .acct-routing-alias > .text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-line.alias > .acct-routing-alias > .copy { flex: none; }
+.acc-line.alias > .acct-routing-alias > .rename-in { flex: 1; max-width: none; }
+.accts.keys .acc:hover > .n { min-width: 2em; }
+.accts.keys .acc:hover > .plan { min-width: 0; }
 /* Safari before 15.4 has no :focus-visible and drops the rules above
    whole: there a focused control stays out on :focus instead */
 @supports not selector(:focus-visible) {

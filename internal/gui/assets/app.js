@@ -9976,14 +9976,12 @@ function drawEditor(p, presetID) {
     ed.append(...field(t("Models"), pick.box, t("Optional: Fetch models to pick from the vendor's list, or type ids; none picked, magpie asks for the list after saving.")));
   }
 
-  // Jev's endpoint can be the one its gateway's docs give — Cloudflare's
-  // names the account, …/accounts/<id>/ai/run — in place of the preset's
+  // A gateway's Jev endpoint can replace the preset's (Cloudflare: /accounts/<id>/ai/run).
   if (decides && !custom && (p?.preset || pr?.id) !== "remote-magpie") {
     if (draft.decide === undefined) draft.decide = p?.decide || pr?.decide || "";
     const du = input((address && movedURLs(draft)?.decide) || draft.decide, pr?.decide || "https://…", "url");
     du.classList.add("decide-url");
-    // Bailian's is at the host of the key's workspace (#647): its id is
-    // typed on its own, the plan's address filled in with it
+    // Fill Bailian's host with the separately entered workspace ID (#647).
     if (!draft.region && pr?.regions?.some((r) => r.decide)) draft.region = (pr.regions.find((r) => r.decide && workspaceOf(r.decide, draft.decide) !== null) || pr.regions[0]).id;
     const tmpl = () => (pr?.regions || []).find((r) => r.id === draft.region)?.decide || (draft.region ? "" : pr?.decide) || "";
     const wsIn = input((draft.workspace ?? workspaceOf(tmpl(), draft.decide)) || "", t("e.g. ws-…, from the Bailian console"));
@@ -13206,7 +13204,7 @@ function keptLogin(p) {
 // kept signed in to one of the user's choosing (p given), when the order
 // is the accounts' own
 function loginsInOrder(a, p) {
-  const ls = a.logins?.length ? [...a.logins] : [{ user: a.user, plan: a.plan, active: true, on: true }];
+  const ls = a.logins?.length ? [...a.logins] : [{ id: a.id, routingAlias: a.routingAlias, user: a.user, plan: a.plan, active: true, on: true }];
   if (p && keptLogin(p)) return ls;
   return ls.sort((x, y) => (y.active ? 1 : 0) - (x.active ? 1 : 0));
 }
@@ -13268,10 +13266,9 @@ function renderAccounts(a, p) {
       dot.title = on ? t("Stop using this account") : t("Use this account too");
       dot.onclick = () => accountAction("login/" + (on ? "off" : "on"), { agent: a.agent, user: l.user });
     }
-    // one line, First or Make first at its right end (the owner, 10-29)
-    const line = el("div", "acc-line");
+    const line = el("div", "acc-line"+(l.routingAlias?" alias":""));
     row.append(line);
-    line.append(dot, accountNameButton(p, l.user), el("span", "plan", accountPlan({ agent: a.agent, builtin: a.builtin, plan: l.plan })));
+    line.append(dot, accountNameButton(p, l.user), routingAliasButton(p, l), el("span", "plan", accountPlan({ agent: a.agent, builtin: a.builtin, plan: l.plan })));
     if (p && on && several) line.append(keyWeight(p, { name: l.user }, wOf(l), weights, "provider/accountweight", { id: p.id, account: l.user }));
     // its own models (#474), when there is another account to send the rest to
     const [amPill, amBox] = ls.length > 1 || accountModelsOf(p, l.user).length ? accountModels(p, l.user, false, l.user) : [];
@@ -13527,14 +13524,9 @@ function codexNote(cls, n, s) {
   return box;
 }
 
-// Accounts brought in from another tool's export instead of signing in
-// again: the files' text (or what is pasted) goes to magpie, which checks
-// each account with the vendor before keeping it, and says what became of
-// each. What is read stays here only until it is sent; the box masks it.
-// A sign-in waiting for its browser's address is kept behind the import
-// rather than canceled: that address pasted into the import box finishes
-// it there (LuvLetter, magpie in Docker, pasted it into this box instead of
-// the sign-in's Callback URL field), and closing the box ends it.
+// Import verifies each exported account before saving; pasted text is masked
+// and retained only until sent. A pending browser sign-in stays available:
+// its callback pasted here completes it; closing the import cancels it.
 function startImport(agent) {
   const behind = signingOpen() && signing.pasteCallback ? signing.id : signing?.behind;
   if (signingOpen() && signing.id !== behind) api("signin/" + signing.id + "/cancel", {}).catch(() => {});
@@ -13944,18 +13936,15 @@ function poolLine(line, ws, q, capFor = () => 0, settable = null) {
 // An account's usage cap (provider.AccountCaps): the share of each window
 // it is used to at most; past it routing goes on to the others.
 const CAP_SHARES = [50, 60, 70, 80, 90];
-// An account's name of the user's own (#1515), kept by magpie
-// (provider.AccountNames), never in a sign-in; accountSeatOf, the key plan
-// it stands in for; accountUserOf, its plugin usage's name (#4416).
+// AccountNames is display metadata, never a sign-in (#1515). accountSeatOf
+// names its key-plan seat; accountUserOf names its plugin usage (#4416).
 function acctIn(m, user) { return m?.[String(user).toLowerCase()] || ""; }
 function accountNameOf(p, user) { return acctIn(p?.accountNames, user); }
 function accountSeatOf(p, user) { return acctIn(p?.accountSeats, user); }
 function accountUserOf(p, user) { return acctIn(p?.accountUsers, user); }
 function accountShownOf(p, user) { return accountNameOf(p, user) || accountUserOf(p, user) || user; }
-// renameIn edits a name in place of at: Enter saves it changed, Escape
-// keeps it. Once: Enter or Escape draws the editor again, and the blur
-// that follows (Chromium's, as the redraw takes the input out) does nothing,
-// rather than draw it again inside that draw or save on Escape (#3944)
+// renameIn: Enter saves changes; Escape keeps the name. Both handle once,
+// ignoring blur from Chromium removing the input during redraw (#3944).
 function renameIn(at, own, hint, save) {
   const i = input(own, hint);
   let over = false;
@@ -13972,8 +13961,7 @@ function renameIn(at, own, hint, save) {
   i.focus();
   return i;
 }
-// accountNameButton is the account's name on its editor row: the name of
-// its own, the account beside it, and a click renames it.
+// accountNameButton shows the editable name beside the account.
 function accountNameButton(p, user) {
   const own = accountNameOf(p, user), seat = accountSeatOf(p, user), vend = accountUserOf(p, user);
   if (!p) return el("span", "n", user);
@@ -13999,6 +13987,49 @@ function accountNameButton(p, user) {
   wrap.append(hideAccounts.eye(user, p.id));
   return wrap;
 }
+function routingAliasButton(p, a, key = false) {
+  const wrap = el("span", "acct-routing-alias" + (a.routingAlias ? " set" : "")), b = el("button", "text quiet", a.routingAlias ? "@" + a.routingAlias : t("Routing alias"));
+  b.setAttribute("aria-label", t("Routing alias"));
+  b.title = t("Without an alias this account joins ordinary routing. With an alias use provider/model@alias. Clearing it restores ordinary routing; old references fail.");
+  b.onclick = (e) => {
+    e.stopPropagation();
+    const i = input(a.routingAlias || "", t("Routing alias"));
+    i.className = "rename-in"; i.maxLength = 32;
+    i.setAttribute("aria-label", t("Routing alias"));
+    let done = false;
+    i.onkeydown = (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Escape") { ev.preventDefault(); done = true; wrap.parentNode.classList.toggle("alias", !key && a.routingAlias); i.replaceWith(b); }
+      if (ev.key === "Enter" && !done) {
+        ev.preventDefault(); done = true;
+        accountAction(key ? "keys/alias" : "provider/accountalias", key ? {id:p.id,ref:a.id,alias:i.value} : {id:p.id,account:a.id,alias:i.value}).then((saved) => { if (!saved) done = false; });
+      }
+    };
+    wrap.parentNode.classList.toggle("alias",!key); b.replaceWith(i); i.focus({preventScroll:true});
+  };
+  wrap.append(b);
+  if (a.routingAlias) {
+    const allowed = accountModelsOf(p, key ? a.id : a.user);
+    const refs = p.routingModels ? (p.routingModels[a.id] || []) : (p.models || []).filter((m) => m.on && !m.noAPI && (!allowed.length || allowed.includes(m.id))).map((m) => `${p.id}/${m.id}@${a.routingAlias}`);
+    const cp = el("button", "copy");
+    cp.title = t("Copy model reference"); cp.setAttribute("aria-label", cp.title);
+    cp.append(svg(COPY_ICON, 12, 1.5)); cp.disabled = !refs.length;
+    const put = async (ref) => {
+      let copied = false;
+      try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(ref); copied = true; } } catch {}
+      if (!copied) copied = copyByCommand(ref);
+      if (copied) { flashCopied(cp); status(t("{what} copied", {what:t("Model")}), "ok"); }
+      else status(t("Couldn't copy. Select it here and copy it yourself: {text}", {text:ref}), "err");
+    };
+    cp.onclick = (e) => {
+      e.stopPropagation();
+      if (refs.length === 1) put(refs[0]);
+      else openProtoMenu(cp, refs.map((v) => ({v,name:v,note:"",literalName:true})), "", put, "Copy model reference");
+    };
+    wrap.append(cp);
+  }
+  return wrap;
+}
 // an account or key list's last row, adding one
 function addRow(say, go) {
   const b = el("button", "acc add"), ic = el("span", "dot");
@@ -14020,10 +14051,8 @@ function windowCapOf(p, user, w) {
   if (own) return own >= 100 ? 0 : own;
   return w?.ownCap ? 0 : accountCapOf(p, user);
 }
-// capHeldOf: how the account is held at cap, as the gateway reads it —
-// a window at or past its cap (capFor: its own, else the account's), not
-// yet renewed — or null: the fullest such window's share and its cap, and
-// when the last of them renews (0 when one doesn't say).
+// capHeldOf returns the fullest exceeded window's share/cap and last reset,
+// or 0 if any reset is unknown; null when no unrenewed window meets capFor.
 function capHeldOf(q, capFor) {
   if (!q || q.error || !q.windows?.length) return null;
   const now = Date.now();
@@ -14176,10 +14205,8 @@ function accountCapPill(p, user, cap, direct) {
   return pill;
 }
 
-// An account's or key's limit on requests at once (#892): its own, else
-// the provider's Concurrency. The pill says it, and how many run and wait
-// (the lanes, read every 2s while one is in sight: refreshLanes), and opens
-// the app's menu: the provider's, none, a number, or the user's own.
+// Account/key concurrency (#892): own else provider's. refreshLanes reads
+// counts every 2s in sight; the menu picks provider, none or a custom limit.
 const LANE_LIMITS = [1, 2, 3, 5, 10];
 let lanesNow = {}, lanesRead = false, lanesTick;
 function laneOwnOf(p, ref) {
@@ -14291,13 +14318,9 @@ function quotaText(w) {
   const count = quotaCount(w);
   return count ? count + " · " + pct : pct;
 }
-// quotaPace: how far a window is from an even pace through it, as a
-// number (fflake33 on Discord): the figure the meter shows less what an
-// even pace would show by now, in points of the window, rounded — used
-// 60% halfway through is +10, and left it is −10; null where the window's
-// start or reset isn't known (startsAt is the gateway's,
-// provider.WithWindowStarts). over says more is used than an even pace
-// would have, whichever way the meter reads.
+// quotaPace is rounded percentage points ahead of even pace: used 60% halfway
+// is +10, left is −10. Unknown start/reset gives null; over always means more
+// used. startsAt comes from provider.WithWindowStarts.
 function quotaPace(w, now = Date.now()) {
   if (w.unlimited || quotaNoShare(w) || w.historyMissing || !w.startsAt || !w.resetsAt) return null;
   const s = Date.parse(w.startsAt), e = Date.parse(w.resetsAt);
@@ -14467,10 +14490,8 @@ function resetInText(at) {
   return at <= Date.now() ? t("Reset time passed") : t("resets {in}", { in: untilText(at) });
 }
 
-// runsOutText: when the soonest of what a window has left is lost, apart
-// from its reset (WorkBuddy's credits come in packages that each end on
-// their own day, runsOutAt): "232.4 credits expire tomorrow 00:39"; ""
-// when not known or past. Smart routing spends such an account first.
+// runsOutText shows soonest remaining-credit expiry, apart from reset;
+// empty if unknown/past. Smart routing spends these credits first.
 function runsOutText(w, when = resetClock) {
   const at = w.runsOutAt ? new Date(w.runsOutAt) : null;
   if (!at || !(at > Date.now()) || !(w.runsOut > 0)) return "";
@@ -14498,14 +14519,9 @@ async function accountAction(path, body, okMsg, confirmed = false, say = (m) => 
   }
 }
 
-// An account's or key's own models (#474): one of several can be kept for
-// some of the provider's models only — a small allowance kept for the cheap
-// ones — and the gateway never sends it another. Unset, it serves all the
-// provider's, as before. The pill on its row says which it serves; a click
-// opens the provider's models under it as chips, picked and saved apart
-// from the editor's Save. acctModels is the row being picked: { id, ref,
-// chosen }. Picks left unsaved there go with the editor's Save, which says
-// it saved them (#2862).
+// Account/key model restrictions (#474): unset serves all provider models.
+// acctModels holds {id,ref,chosen}; chips save separately, and editor Save
+// also saves unsaved picks (#2862).
 let acctModels = null;
 function accountModelsOf(p, ref) { return p.accountModels?.[String(ref).toLowerCase()] || []; }
 // accountModelsDraft: the open picker's unsaved picks as accountmodels takes
@@ -14638,7 +14654,7 @@ function renderKeyAccounts(p) {
     const name = el("button", "n rename" + (k.name ? "" : " mono"), k.name || k.masked);
     name.title = t("Rename");
     name.onclick = () => renameIn(name, k.name || "", t("Name, e.g. Personal or Team"), (n) => accountAction("keys/rename", { id: p.id, ref: k.id, name: n }));
-    row.append(dot, name);
+    row.append(dot, name, routingAliasButton(p, k, true));
     if (k.name) row.append(el("span", "plan mono", k.masked));
     // a key rotated at the vendor (#1869): its new value pasted in place
     const edit = el("button", "key-edit");
@@ -15225,12 +15241,9 @@ const API_NAMES = { openai: "OpenAI compatible", responses: "OpenAI Responses", 
 // urlHint: the Base URL's placeholder for the API it is for
 const urlHint = (api) => api === "anthropic" ? "https://…" : api === "gemini" ? "https://…/v1beta" : "https://…/v1";
 
-// respellURL turns a base URL into the one protocol api is asked at: the
-// root for Anthropic, which adds /v1 itself, …/v1 for OpenAI's two,
-// …/v1beta for Gemini's (as Google's SDKs add it).
-// WORKSPACE stands for a Bailian workspace's id in a decision API's
-// address (provider.WorkspaceID); workspaceOf is the id url has in its
-// place in tmpl ("" for none), or null when url isn't at tmpl's host.
+// respellURL fits API bases: Anthropic root, OpenAI /v1, Gemini /v1beta.
+// WORKSPACE is provider.WorkspaceID's placeholder. workspaceOf extracts it
+// from tmpl's URL: "" if absent, null if the URL doesn't match.
 const WORKSPACE = "{WorkspaceId}";
 function workspaceOf(tmpl, url) {
   if (!tmpl || !url) return null;
@@ -15252,16 +15265,10 @@ function respellURL(u, api) {
   return /\/v\d+[a-z]*$/.test(u) || !/^https?:\/\/[^/]+$/.test(u) ? u : u + "/v1";
 }
 
-// curlOf reads a curl command pasted whole, as a vendor's docs show it
-// (@mark_li21 on X: 能支持通过curl例子直接导入provider不？), into what a
-// provider's editor takes: the API its URL's endpoint names (…/chat/
-// completions OpenAI's chat, …/messages Anthropic's, …/responses OpenAI's
-// Responses) and the base URL that API is asked at (respellURL), the key
-// from Authorization: Bearer, x-api-key or api-key, and the model of its
-// JSON body. Lines may be joined by \ (sh), ^ (cmd) or ` (PowerShell). A
-// key that stands for one ($OPENAI_API_KEY, %KEY%, <API_KEY>, YOUR_API_KEY)
-// is no key: it is given back as placeholder. null for text that isn't a
-// curl command.
+// curlOf imports a vendor curl command's endpoint API, base (respellURL),
+// Bearer/x-api-key/api-key credential and JSON model (@mark_li21).
+// Supports sh/cmd/PowerShell continuations; variable/template keys remain
+// placeholders. Returns null for non-curl text.
 function curlOf(text) {
   let s = String(text || "").trim();
   const head = /^curl(?:\.exe)?(?=\s)/i.exec(s);

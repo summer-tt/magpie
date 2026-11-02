@@ -421,5 +421,5 @@ func InOrder(agent string, es []Entry) []Entry {
 // CodexOwn reports whether e is one of a ChatGPT account's own models,
 // which the ChatGPT backend lists to Codex by its bare slug (e.Model).
 func CodexOwn(e Entry) bool {
-	return e.Group == "" && e.Provider.Account != nil && e.Provider.Account.Agent == "codex"
+	return e.RoutingAlias == "" && e.Group == "" && e.Provider.Account != nil && e.Provider.Account.Agent == "codex"
 }

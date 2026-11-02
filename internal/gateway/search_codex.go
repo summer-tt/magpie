@@ -103,6 +103,28 @@ func (s *Server) codexSearchBy(ctx context.Context, p provider.Provider, query s
 
 // codexSearch asks the ChatGPT backend's search, as Codex's web.run does.
 func (s *Server) codexSearch(ctx context.Context, p provider.Provider, query string) (string, []Hit, error) {
+	model := searcherModel(p)
+	if model == "" {
+		model = "gpt-5"
+	}
+	r, err := http.NewRequestWithContext(magpieChose(ctx), http.MethodPost, "http://magpie", nil)
+	if err != nil {
+		return "", nil, err
+	}
+	if !routingRewriteAllowed(r, withModel([]byte("{}"), p.ModelRef(model))) {
+		return "", nil, errors.New("qualified model cannot search on another routing account")
+	}
+	ons, _ := chatGPTSearchers(r, p.ModelRef(model))
+	for _, on := range ons {
+		if on.AccountServes(on.Account.User, model) && on.Account.Lists(on.OwnModelID(model)) && on.RoutingCurrent() {
+			return s.codexSearchOn(ctx, on, model, query)
+		}
+	}
+	return "", nil, cantServe{errors.New("ChatGPT web search has no available routing account")}
+}
+
+// codexSearchOn sends on the selected account, checked again after its RPM wait.
+func (s *Server) codexSearchOn(ctx context.Context, p provider.Provider, model, query string) (string, []Hit, error) {
 	ctx, cancel := context.WithTimeout(s.metered(p.Via(ctx), p, ""), searchTimeout/2)
 	defer cancel()
 	q, err := maskedQuery(ctx, query, &p)
@@ -111,10 +133,6 @@ func (s *Server) codexSearch(ctx context.Context, p provider.Provider, query str
 	}
 	// the model a search names is the turn's in Codex; the backend answers
 	// the same whichever it is, so the account's own small model
-	model := searcherModel(p)
-	if model == "" {
-		model = "gpt-5"
-	}
 	body, _ := json.Marshal(map[string]any{
 		"id":       newUUID(),
 		"model":    model,
@@ -138,7 +156,7 @@ func (s *Server) codexSearch(ctx context.Context, p provider.Provider, query str
 	if why, revoked := provider.RevokedSignIn(p.Account, r); revoked {
 		return "", nil, errors.New(who + why)
 	}
-	res, err := s.client.Do(r)
+	res, err := s.client.Do(routingRequest(r, p))
 	res = tapSearch(ctx, r, body, res)
 	if err != nil {
 		if ctx.Err() != nil {

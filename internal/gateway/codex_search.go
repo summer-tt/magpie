@@ -75,6 +75,11 @@ func (s *Server) alphaSearchBody(w http.ResponseWriter, r *http.Request, body []
 		writeError(w, provider.Responses, http.StatusBadRequest, "the web search request names no model")
 		return
 	}
+	var routeOK bool
+	r, routeOK = constrainRouting(w, r, provider.Responses, body)
+	if !routeOK {
+		return
+	}
 	note := ""
 	if ons, model := chatGPTSearchers(r, q.Model); len(ons) > 0 {
 		answered, why := s.alphaSearchOn(w, r, withModel(body, model), model, ons)
@@ -83,7 +88,15 @@ func (s *Server) alphaSearchBody(w http.ResponseWriter, r *http.Request, body []
 		}
 		// a failure would end the turn: magpie searches in its place
 		log.Printf("web search on ChatGPT for %s: %s", q.Model, why)
+		if constrainedRef(r) != "" {
+			writeError(w, provider.Responses, http.StatusBadGateway, why)
+			return
+		}
 		note = "ChatGPT's web search failed (" + why + "); magpie searched in its place.\n\n"
+	}
+	if constrainedRef(r) != "" {
+		writeError(w, provider.Responses, http.StatusNotFound, "qualified model has no available account for web search")
+		return
 	}
 	s.alphaSearchHere(w, r, q, note)
 }
@@ -109,7 +122,7 @@ func chatGPTSearchers(r *http.Request, model string) ([]provider.Provider, strin
 	var ready, later []provider.Provider
 	for _, o := range all {
 		c := candidate{p: o, model: bare, rest: o.ID}
-		if !accountAllowed(who, c) {
+		if !p.RoutingAllows(o.RoutingID()) || !accountAllowed(who, c) {
 			continue
 		}
 		if resting(c) || provider.SignInMarked(o.Account) {
@@ -147,6 +160,10 @@ func (s *Server) alphaSearchOn(w http.ResponseWriter, r *http.Request, body []by
 func (s *Server) alphaSearchAsked(w http.ResponseWriter, r *http.Request, body []byte, model string, ons []provider.Provider, start time.Time) (bool, string) {
 	var errs []string
 	for _, on := range ons {
+		if !on.RoutingCurrent() {
+			errs = append(errs, "routing account is no longer available")
+			continue
+		}
 		who := "OpenAI (" + on.Account.User + "): "
 		ctx := on.Via(r.Context())
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.CodexBase+AlphaSearchPath, bytes.NewReader(body))
@@ -170,7 +187,7 @@ func (s *Server) alphaSearchAsked(w http.ResponseWriter, r *http.Request, body [
 			errs = append(errs, who+why)
 			continue
 		}
-		res, err := s.client.Do(req)
+		res, err := s.client.Do(routingRequest(req, on))
 		if err != nil {
 			if r.Context().Err() != nil {
 				return true, ""
@@ -184,6 +201,15 @@ func (s *Server) alphaSearchAsked(w http.ResponseWriter, r *http.Request, body [
 		if res.StatusCode < 200 || res.StatusCode > 299 {
 			msg, _ := io.ReadAll(io.LimitReader(res.Body, 4<<10))
 			res.Body.Close()
+			if on.RoutingAlias() != "" {
+				if retry := res.Header.Get("Retry-After"); retry != "" {
+					w.Header().Set("Retry-After", retry)
+				}
+				writeError(w, provider.Responses, res.StatusCode, vendorMessage(msg))
+				c.Millis, c.Error = time.Since(start).Milliseconds(), res.Status
+				s.record(c)
+				return true, ""
+			}
 			errs = append(errs, who+res.Status+": "+strings.TrimSpace(string(msg)))
 			c.Millis, c.Error = time.Since(start).Milliseconds(), res.Status
 			s.record(c)

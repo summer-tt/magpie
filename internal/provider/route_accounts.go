@@ -36,6 +36,9 @@ func (p Provider) AccountsOn() []AccountOn {
 	for i, q := range also {
 		all = append(all, AccountOn{Provider: q, Rank: i + 1})
 	}
+	if p.HasRoutingAliases() {
+		all = slices.DeleteFunc(all, func(a AccountOn) bool { return !p.RoutingAllows(a.Provider.RoutingID()) })
+	}
 	if ranks := p.LoginRanks(); ranks != nil {
 		at := func(a AccountOn) int {
 			if r, ok := ranks[strings.ToLower(a.Account.User)]; ok {
@@ -115,6 +118,9 @@ func (p Provider) KeysFor(model string, held func(KeyOn) bool) (out, unlisted, b
 	planHas := p.PlanServing(model)
 	var planless []KeyOn
 	for i, k := range keys {
+		if p.HasRoutingAliases() && !p.RoutingAllows(KeyID(k.Key)) {
+			continue
+		}
 		q := p.WithKey(k)
 		if len(q.Speaks()) == 0 && !q.DecidesModel(model) {
 			if noURL == "" {
