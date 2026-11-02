@@ -287,6 +287,9 @@ func keyCardTag(p Provider) string {
 		case "tencent":
 			return keyTag("tencent", p.AccessKeyID)
 		case "alibaba":
+			if TakesBailianAccessKey(p) {
+				return keyTag("bailian personal", p.AccessKeyID)
+			}
 			site, _ := aliPlanSite(p)
 			return keyTag("alibaba "+site.region, p.AccessKeyID)
 		case "stepfun":

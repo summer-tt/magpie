@@ -3,12 +3,13 @@ package provider
 // A plan bought with an API key — Zhipu's GLM Coding Plan (and Z.ai's),
 // Kimi Code, OpenCode Go, a Command Code plan, MiniMax's Coding (Token)
 // Plan, Ollama Cloud's included allowance, a Le Chat plan's month of Mistral
-// Vibe, StepFun's Step Plan, Volcengine Ark's Coding and Agent Plans and
-// Tencent Cloud's Token Plan 企业版 — has windows of allowance like a
-// subscription's, which the vendor tells to the key (StepFun only to a
-// sign-in, stepfun_plan.go; Volcengine and Tencent Cloud only to the
-// account's access key, volcengine_usage.go and tencent_usage.go): the
-// Usage page shows them beside the subscriptions'.
+// Vibe, StepFun's Step Plan, Volcengine Ark's Coding and Agent Plans,
+// Tencent Cloud's Token Plan 企业版 and Bailian's Token Plan 个人版 — has windows
+// of allowance like a subscription's, which the vendor tells to the key
+// (StepFun only to a sign-in, stepfun_plan.go; Volcengine, Tencent Cloud
+// and Bailian only to the account's access key, volcengine_usage.go,
+// tencent_usage.go and bailian_usage.go): the Usage page shows them
+// beside the subscriptions'.
 
 import (
 	"context"
@@ -903,12 +904,20 @@ func PlanQuotas(ctx context.Context) []SubscriptionQuota {
 			out = append(out, readNow(q))
 		}
 	}
-	if ctx.Err() == nil {
-		noteQuotaHistory(out, time.Now())
+	// a read begun before a plan's credentials changed says nothing of
+	// what is now: it is answered to its caller, never cached or noted
+	if ctx.Err() == nil && stillCurrent(ctx) {
+		noteQuotaHistoryRead(ctx, out, time.Now())
 		c.Lock()
-		c.data = cacheCards(c.data, out, seq, again)
-		if !again {
-			c.at, out = time.Now(), c.data
+		// the card cache is published in the same window: a clear that
+		// came while this read was out leaves it empty
+		if publishReading(ctx, func() {
+			c.data = cacheCards(c.data, out, seq, again)
+			if !again {
+				c.at = time.Now()
+			}
+		}) && !again {
+			out = c.data
 		}
 		c.Unlock()
 	}

@@ -10005,13 +10005,13 @@ function drawEditor(p, presetID) {
     ed.append(...field(t("Team project ID"), proj, t("Only for a key on a team's GLM Coding Plan: both are in {p}'s console, under the team's organization and project. With them the Usage page shows the team's 5-hour and weekly windows.", { p: pr?.name || p.name })));
   }
 
-  // plan windows told only to an access key (Volcengine #1427, Tencent #1574);
-  // the saved Secret never comes back here
+  // Plan windows need the account access key (Volcengine, Tencent, Bailian);
+  // the saved Secret never comes back here.
   const access = p ? p.accessKey : pr?.accessKey ? { vendor: pr.accessKeyVendor || "volcengine", id: "", secretSet: false } : null;
   let accessAt = () => {}, accessShown = () => !!access;
   if (access) {
-    const tc = access.vendor === "tencent";
-    const idName = tc ? t("SecretId") : t("AccessKey ID"), secretName = tc ? t("SecretKey") : t("Secret Access Key");
+    const tc = access.vendor === "tencent", bl = access.vendor === "bailian" || access.vendor === "alibaba" && (presetID === "bailian-token-plan" || [p?.chat, p?.anthropic, p?.responses].some((base) => base?.includes("token-plan.cn-beijing.maas.aliyuncs.com")));
+    const idName = tc ? t("SecretId") : t("AccessKey ID"), secretName = tc ? t("SecretKey") : bl ? t("AccessKey Secret") : t("Secret Access Key");
     if (draft.accessKeyID === undefined) draft.accessKeyID = access.id || "";
     const ak = input(draft.accessKeyID, idName);
     ak.classList.add("volc-ak");
@@ -10034,6 +10034,8 @@ function drawEditor(p, presetID) {
       ...field(idName, ak, ""),
       ...field(secretName, pair, tc
         ? t("Token Plan Enterprise's usage is told only to the Tencent Cloud account's API key (console → Access management → API keys), not to the plan's API key. Give its SecretId and SecretKey here for the Usage page to show it; a sub-user's key that may read TokenHub is enough. It is used for nothing else.")
+        : bl
+          ? t("The Bailian Token Plan's monthly usage is told only to the Alibaba Cloud account's access key (RAM console → AccessKeys), not to the plan's sk- key. Give its AccessKey ID and Secret here for the Usage page to show the month's used share and credits; it must be the account the plan is subscribed on, as several sk- keys don't mean several plans. It is used for nothing else.")
         : access.vendor === "alibaba"
         ? t("The plan's usage is told only to the Alibaba Cloud account's AccessKey (console → AccessKey), not to the plan's API key. Give its AccessKey ID and Secret here for the Usage page to show it; a RAM user that may use Model Studio is enough. It is used for nothing else.")
         : t("The plan's 5-hour, weekly and monthly windows are told only to the account's access key (Volcengine console → API Access Keys), not to the plan's API key. Give it here for the Usage page to show them; it is used for nothing else.")),
@@ -14612,12 +14614,8 @@ function familyWindows(ws) {
   const rank = (w) => (w.tiers && FAMILY_FIRST.includes(w.name) ? FAMILY_FIRST.indexOf(w.name) : FAMILY_FIRST.length);
   return out.map((w, i) => [w, i]).sort(([a, i], [b, j]) => rank(a) - rank(b) || i - j).map(([w]) => w);
 }
-// poolWindows: an account's windows one row a pool, where models share one
-// allowance (Antigravity's Gemini, Claude & GPT): the pool's 5-hour window
-// then its weekly one, each named with its pool, its models along as
-// members for its tooltip (a user on Discord: the three models read the
-// same, show the 5 hours and the week left a group). The models' windows
-// in no pool go on as families.
+// poolWindows shows each shared pool's 5h then week, retaining member models
+// for tooltips; unpooled model windows remain families.
 const isPool = (w) => w.pool && !w.family;
 // poolOfModel: a pool named for one model, its name saying a version
 // ("Gemini 4 Argon", apart from the other Gemini models'), not a family's.

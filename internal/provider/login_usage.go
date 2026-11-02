@@ -299,7 +299,7 @@ func cachedLoginReading(ctx context.Context, l Login) loginUsageEntry {
 		// nothing read since magpie started: the reading kept on disk,
 		// as of when it was made
 		c.Unlock()
-		return entry(keepLast(cutShort(l, errNotAsked), l.User))
+		return entry(keepLast(ctx, cutShort(l, errNotAsked), l.User))
 	}
 	if r == nil {
 		if stale {

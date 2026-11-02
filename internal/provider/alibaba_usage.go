@@ -150,7 +150,7 @@ func aliPlanQuotas(ctx context.Context) []SubscriptionQuota {
 				// what routing goes by, read just now (KeyAllowance)
 				noteKeyAllowance(j.p, out[i].Windows, time.Now())
 			}
-			out[i] = keepReading(ctx, out[i], keyTag("alibaba "+j.site.region, j.p.AccessKeyID))
+			out[i] = keepReading(ctx, out[i], keyAllowanceTag(j.p))
 		}()
 	}
 	wg.Wait()
@@ -166,6 +166,9 @@ func aliPlanQuotas(ctx context.Context) []SubscriptionQuota {
 
 // aliPlanQuota is p's plan as a card, read with its access key.
 func aliPlanQuota(ctx context.Context, p Provider, site aliSite) SubscriptionQuota {
+	if site.region == "cn-beijing" {
+		return bailianPlanQuota(ctx, p)
+	}
 	q := SubscriptionQuota{Provider: p.ID, Name: p.Name, Icon: p.Icon, Plan: aliPlanName, Windows: []QuotaWindow{}}
 	ws, err := aliReadUsage(ctx, p.AccessKeyID, p.SecretAccessKey, site, time.Now)
 	if err != nil {
