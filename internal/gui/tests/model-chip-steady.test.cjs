@@ -69,6 +69,20 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           await page.locator(".row.provider", { hasText: "Relay" }).first().click();
           const chips = editor.locator(".mchips .mchip");
           await chips.first().waitFor();
+          // A list with some models picked draws the picked chips alone and
+          // offers the rest behind Show the other N. The geometry below is
+          // about all 30, so open it first; with none picked all 30 are
+          // already drawn. The control has a stable class and its localized
+          // text is the app's own t() string.
+          if (chosen.length) {
+            const rest = editor.locator(".mchips .mchips-rest");
+            assert.equal(await rest.count(), 1, "the unpicked models are offered to be shown");
+            assert.equal((await rest.textContent()).trim(),
+              await page.evaluate((n) => t("Show the other {n}", { n }), models.length - chosen.length),
+              "the expand control names the models it shows");
+            await rest.click();
+            await page.waitForFunction((n) => document.querySelectorAll("#modal:not([hidden]) .editor .mchips .mchip").length === n, models.length);
+          }
           // each chip's box within the list's own content, so that a scroll
           // of the page or the list (the click brings a chip into view at
           // 420px) is not counted as a chip moving
