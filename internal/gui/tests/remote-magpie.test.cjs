@@ -157,6 +157,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
           for (const label of w.decide) assert.equal(await saved.locator("label", { hasText: label }).count(), 0, label);
           assert.equal(await saved.locator('input[type="url"]').count(), 1, "only the remote's address is editable");
           assert.equal(await saved.locator(".library-mcp", { hasText: w.mcp }).locator("input").isChecked(), true, "the switch as the backend reads it");
+          // Picked only keeps the two decision models behind Show the other;
+          // open them without leaving Picked only, so the list below is whole
+          if (decisions) {
+            const other = await page.evaluate(() => t("Show the other {n}", { n: 2 }));
+            await page.waitForFunction((want) => document.querySelector(".editor .mchips .mchips-rest")?.textContent.trim() === want, other);
+            await saved.locator(".mchips .mchips-rest").click();
+            await page.waitForFunction((n) => document.querySelectorAll(".editor .mchips .mchip").length === n, 3);
+          }
           assert.deepEqual(await saved.locator(".mchip > span:first-child").allTextContents(),
             decisions ? ["Chat", "custom-a · judge", "custom-b · judge"] : ["Chat"]);
           if (process.env.ARTIFACT_DIR && engine === "chromium" && lang === "en") {

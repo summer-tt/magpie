@@ -99,6 +99,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const foot = () => editor.locator(".mfoot");
         const chips = () => editor.locator(".mchips .mchip").evaluateAll((cs) => cs.map((c) => c.dataset.model || c.textContent).sort());
         const picks = () => editor.locator(".mchips .mchip.on").evaluateAll((cs) => cs.map((c) => c.dataset.model || c.textContent).sort());
+        const rest = () => editor.locator(".mchips .mchips-rest");
 
         // never fetched: the add form's name, and the hint names it too
         await open("Fresh Relay");
@@ -120,7 +121,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const top = await view.evaluate((v) => v.scrollTop);
         const edTop = await editor.evaluate((e) => e.scrollTop);
         await again.click();
-        for (let i = 0; i < 60 && !(await chips()).includes("b-chat"); i++) await page.waitForTimeout(50);
+        // Picked only keeps the unpicked models behind Show the other; the
+        // redraw is Group B's when the button offers its two, and opening it
+        // puts the whole list in sight for the assertions below
+        const other = await page.evaluate(() => t("Show the other {n}", { n: 2 }));
+        await page.waitForFunction((want) => document.querySelector("#modal:not([hidden]) .editor .mchips .mchips-rest")?.textContent.trim() === want, other);
+        await rest().click();
+        await page.waitForFunction((n) => document.querySelectorAll("#modal:not([hidden]) .editor .mchips .mchip").length === n, 4);
         assert.equal(calls.length, 1);
         assert.equal(calls[0].key, "sk-group-b", "asked with the key just typed");
         assert.equal(calls[0].typed, true);
