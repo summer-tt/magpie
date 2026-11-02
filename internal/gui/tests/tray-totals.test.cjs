@@ -195,13 +195,13 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
       // and with the panel as the tray's: its Usage tab, at the period
       await t.test("panel", async () => {
-        const errors = [], asked = [];
+        const errors = [], asked = [], posts = [];
         const context = await browser.newContext({ viewport: { width: 440, height: 400 }, reducedMotion: "reduce" });
         const page = await context.newPage();
         page.setDefaultTimeout(5000);
         page.setDefaultNavigationTimeout(60000);
         page.on("pageerror", (e) => errors.push(e.message));
-        await page.route("**/*", server(lang, [], asked, true));
+        await page.route("**/*", server(lang, posts, asked, true));
         await page.goto("http://magpie.test/?mode=panel");
         await page.locator('[data-ptab="agents"].on').waitFor();
         await page.evaluate(() => panelUseFocus("7d"));
@@ -209,11 +209,20 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         for (let i = 0; i < 60 && !asked.some((a) => a.includes("period=7d")); i++) await page.waitForTimeout(40);
         assert(asked.some((a) => a.startsWith("/api/usage/requests?") && a.includes("period=7d")), "asked: " + asked.join(" "));
         await shot(page, "panel");
-        // a period that isn't the panel's does nothing
-        const n = asked.length;
+        // a period that isn't the panel's does nothing. The read before this
+        // one (and the panel's own polling) can still land in `asked`, so the
+        // guarantee is the invalid period is never asked, the picked period
+        // stays, and nothing is written—not that the shared log stops growing
+        const bad = () => asked.filter((a) => a.includes("period=3d"));
+        const picked = () => page.locator("#panelUsage .pu-bar .opt.on").textContent();
+        assert.equal(bad().length, 0, "asked: " + asked.join(" "));
+        assert.equal((await picked()).trim(), w.days);
         await page.evaluate(() => panelUseFocus("3d"));
         await page.waitForTimeout(200);
-        assert.equal(asked.length, n);
+        assert.equal(bad().length, 0, "an invalid period asked: " + asked.join(" "));
+        assert.equal((await picked()).trim(), w.days, "the panel's period changed");
+        assert.equal(await page.evaluate(() => document.body.dataset.ptab), "stats", "the panel's tab changed");
+        assert.deepEqual(posts, [], "an invalid period wrote");
         assert.deepEqual(errors, []);
         await context.close();
       });
