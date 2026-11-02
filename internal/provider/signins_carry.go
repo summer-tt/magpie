@@ -52,6 +52,9 @@ type SignIns struct {
 	Logins []savedLogin `json:"logins,omitempty"`
 	// Plugins are the plugins' sign-ins by key, plugin-auth.json's.
 	Plugins map[string]json.RawMessage `json:"plugins,omitempty"`
+	// PluginLogins binds each carried auth slot to its saved routing owner.
+	// Labels are display metadata; Agent, Home and ID supply the identity.
+	PluginLogins map[string]savedLogin `json:"pluginLogins,omitempty"`
 	// Codex is the record (SignInID) of the account Codex was signed in to
 	// where these were collected: put back where Codex is signed out.
 	Codex string `json:"codex,omitempty"`
@@ -76,6 +79,17 @@ type signInRec struct {
 	login *savedLogin
 	key   string // plugin-auth.json's key
 	raw   json.RawMessage
+	owner *savedLogin
+}
+
+// stateHash checks the local credential and routing owner together before
+// apply. It is not the portable credential hash used by sync deletion rules.
+func (r signInRec) stateHash() string {
+	if r.owner == nil {
+		return r.hash
+	}
+	b, _ := json.Marshal([]string{r.hash, r.owner.Agent, r.owner.Home, r.owner.ID})
+	return credHash(b)
 }
 
 // carried is whether an account of logins.json goes with the sign-ins:
@@ -187,7 +201,11 @@ func (s *SignIns) records() map[string]signInRec {
 			if ms := plugin.AuthExpires(raw); ms > 0 {
 				at = time.UnixMilli(ms)
 			}
-			add(signInRec{id: pluginRecID(k, raw), hash: credHash(raw), at: at, key: k, raw: raw})
+			r := signInRec{id: pluginRecID(k, raw), hash: credHash(raw), at: at, key: k, raw: raw}
+			if l, ok := s.PluginLogins[k]; ok {
+				r.owner = &l
+			}
+			add(r)
 		}
 	}
 	return out
@@ -227,8 +245,8 @@ func rotatingPlugins() map[string]bool {
 	return out
 }
 
-// Hashes are s's sign-ins as their ids and the hashes of their
-// credentials: what a sync compares, never the credentials themselves.
+// Hashes are s's sign-ins as their ids and credential hashes. Local saved
+// owners may differ after a successful sync and are not credential edits.
 func (s *SignIns) Hashes() map[string]string {
 	out := map[string]string{}
 	for id, r := range s.records() {
@@ -262,11 +280,14 @@ func CollectSignIns() (*SignIns, error) {
 	if discoveryOff() {
 		return nil, errAccountDiscoveryOff
 	}
+	loginsMu.Lock()
 	ls, err := readLoginsFile()
 	if err != nil {
+		loginsMu.Unlock()
 		return nil, err
 	}
 	pl, err := plugin.AuthEntries()
+	loginsMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("the plugins' sign-ins can't be read: %w", err)
 	}
@@ -282,6 +303,16 @@ func CollectSignIns() (*SignIns, error) {
 		}
 		if len(s.Plugins) == 0 {
 			s.Plugins = nil
+		}
+	}
+	for _, l := range ls {
+		if strings.HasPrefix(l.Agent, "plugin:") {
+			if _, ok := pl[l.Home]; ok && l.Agent == "plugin:"+plugin.ProviderOf(l.Home) {
+				if s.PluginLogins == nil {
+					s.PluginLogins = map[string]savedLogin{}
+				}
+				s.PluginLogins[l.Home] = savedLogin{ID: loginID(l), Agent: l.Agent, Home: l.Home, User: l.User, On: l.On, First: l.First}
+			}
 		}
 	}
 	live, _, lerr := readCodexLogin(codexHome(), false)
@@ -322,12 +353,15 @@ func liveCodex(l savedLogin, auth []byte) bool {
 type SignInPlan struct {
 	put    []signInRec
 	remove []string
-	seen   map[string]string // id → hash read here; absent: not here
-	codex  *signInRec        // for Codex where it is signed out
+	seen   map[string]string // id → local stateHash for apply CAS; absent: not here
+	err    error
+	codex  *signInRec // for Codex where it is signed out
 }
 
 // Empty says the plan changes nothing.
-func (p SignInPlan) Empty() bool { return len(p.put) == 0 && len(p.remove) == 0 && p.codex == nil }
+func (p SignInPlan) Empty() bool {
+	return p.err == nil && len(p.put) == 0 && len(p.remove) == 0 && p.codex == nil
+}
 
 // newer says a was renewed after b, both saying when.
 func newer(a, b signInRec) bool { return !a.at.IsZero() && !b.at.IsZero() && a.at.After(b.at) }
@@ -343,7 +377,33 @@ func MergeSignIns(local, remote *SignIns, prev map[string]string) (*SignIns, Sig
 	lr, rr := local.records(), remote.records()
 	plan := SignInPlan{seen: map[string]string{}}
 	for id, r := range lr {
-		plan.seen[id] = r.hash
+		plan.seen[id] = r.stateHash()
+	}
+	for id, l := range lr {
+		r, ok := rr[id]
+		if !ok || l.login != nil || r.login != nil {
+			continue
+		}
+		if l.key != r.key || l.owner != nil && r.owner != nil && (l.owner.ID != r.owner.ID || l.owner.Agent != r.owner.Agent || l.owner.Home != r.owner.Home) {
+			reserved, err := carriedPluginReservation(l, r)
+			if err != nil {
+				plan.err = err
+			} else if reserved {
+				plan.err = fmt.Errorf("plugin sign-in routing owner conflict")
+			}
+		}
+		// An older peer cannot erase a known owner, even with a newer
+		// credential. A different slot must be checked by applyPlugins.
+		if l.key == r.key {
+			if r.owner == nil {
+				r.owner = l.owner
+				rr[id] = r
+			}
+			if l.owner == nil {
+				l.owner = r.owner
+				lr[id] = l
+			}
+		}
 	}
 	shared := map[string]signInRec{}
 	for id, l := range lr {
@@ -384,6 +444,15 @@ func MergeSignIns(local, remote *SignIns, prev map[string]string) (*SignIns, Sig
 		shared[id] = r
 		plan.put = append(plan.put, r)
 	}
+	planned := map[string]bool{}
+	for _, r := range plan.put {
+		planned[r.id] = true
+	}
+	for id, r := range shared {
+		if before, ok := plan.seen[id]; ok && r.stateHash() != before && !planned[id] {
+			plan.put = append(plan.put, r)
+		}
+	}
 	out := &SignIns{}
 	hashes := map[string]string{}
 	for _, id := range slices.Sorted(maps.Keys(shared)) {
@@ -397,6 +466,12 @@ func MergeSignIns(local, remote *SignIns, prev map[string]string) (*SignIns, Sig
 			out.Plugins = map[string]json.RawMessage{}
 		}
 		out.Plugins[r.key] = r.raw
+		if r.owner != nil {
+			if out.PluginLogins == nil {
+				out.PluginLogins = map[string]savedLogin{}
+			}
+			out.PluginLogins[r.key] = *r.owner
+		}
 	}
 	switch {
 	case local != nil && local.Codex != "":
@@ -417,22 +492,29 @@ func MergeSignIns(local, remote *SignIns, prev map[string]string) (*SignIns, Sig
 // RestoreSignIns puts a backup's sign-ins in: those not here are added,
 // those here renewed later where the backup was made are updated, nothing
 // is taken away, and Codex is signed in to its account when it is signed
-// out here.
-func RestoreSignIns(s *SignIns) (SignInsResult, error) {
+// out here. Selected providers are checked before any writes and supply
+// the incoming owner evidence when their registry has not been applied yet.
+func RestoreSignIns(s *SignIns, providers ...Provider) (SignInsResult, error) {
 	if s == nil {
 		return SignInsResult{}, nil
+	}
+	if err := CheckSignInsRouting(s, providers); err != nil {
+		return SignInsResult{}, err
 	}
 	here, err := CollectSignIns()
 	if err != nil {
 		return SignInsResult{}, err
 	}
 	lr := here.records()
-	plan := SignInPlan{seen: here.Hashes()}
+	plan := SignInPlan{seen: map[string]string{}}
+	for id, r := range lr {
+		plan.seen[id] = r.stateHash()
+	}
 	var kept int
 	for _, r := range s.records() {
 		l, ok := lr[r.id]
 		switch {
-		case !ok, newer(r, l):
+		case !ok, newer(r, l), r.hash == l.hash && r.owner != nil && r.stateHash() != l.stateHash():
 			plan.put = append(plan.put, r)
 		case l.hash != r.hash:
 			kept++
@@ -441,15 +523,19 @@ func RestoreSignIns(s *SignIns) (SignInsResult, error) {
 	if c, ok := s.records()[s.Codex]; ok && c.login != nil {
 		plan.codex = &c
 	}
-	res, err := ApplySignIns(plan)
+	res, err := ApplySignIns(plan, providers...)
 	res.Kept += kept
 	return res, err
 }
 
 // ApplySignIns does a plan here: under logins.json's lock, and
-// plugin-auth.json's, each read afresh.
-func ApplySignIns(p SignInPlan) (SignInsResult, error) {
+// plugin-auth.json's, each read afresh. Providers are only those selected by
+// the caller and checked before it applies their registry.
+func ApplySignIns(p SignInPlan, providers ...Provider) (SignInsResult, error) {
 	var res SignInsResult
+	if p.err != nil {
+		return res, p.err
+	}
 	if p.Empty() {
 		return res, nil
 	}
@@ -468,10 +554,10 @@ func ApplySignIns(p SignInPlan) (SignInsResult, error) {
 			plugins = append(plugins, r)
 		}
 	}
-	if err := applyLogins(logins, gone, p.seen, &res); err != nil {
+	if err := applyLogins(logins, gone, p.seen, &res, providers); err != nil {
 		return res, err
 	}
-	if err := applyPlugins(plugins, gone, p.seen, &res); err != nil {
+	if err := applyPlugins(plugins, gone, p.seen, &res, providers); err != nil {
 		return res, err
 	}
 	if p.codex != nil {
@@ -484,7 +570,7 @@ func ApplySignIns(p SignInPlan) (SignInsResult, error) {
 	return res, nil
 }
 
-func applyLogins(put []signInRec, gone map[string]bool, seen map[string]string, res *SignInsResult) error {
+func applyLogins(put []signInRec, gone map[string]bool, seen map[string]string, res *SignInsResult, providers []Provider) error {
 	if len(put) == 0 && !hasPrefixed(gone, "plugin|", false) {
 		return nil
 	}
@@ -513,6 +599,11 @@ func applyLogins(put []signInRec, gone map[string]bool, seen map[string]string, 
 			res.Kept++
 			continue
 		}
+		if in.Agent == "codex" {
+			if err := checkCarriedCodexOwner(in, ls, providers); err != nil {
+				return err
+			}
+		}
 		var at []int
 		for i, l := range ls {
 			if l.Agent == in.Agent && (sameLogin(l, in) || in.Agent == "codex" && sameRefresh(l.Auth, in.Auth) && !codexWorkspacesApart(l.Auth, in.Auth) || loginRecID(l) == r.id) {
@@ -524,6 +615,11 @@ func applyLogins(put []signInRec, gone map[string]bool, seen map[string]string, 
 			in.Held, in.First, in.Order, in.was = false, false, 0, ""
 			if slices.ContainsFunc(ls, func(l savedLogin) bool { return l.ID != "" && l.ID == in.ID }) {
 				in.ID = ""
+			}
+			if in.Agent == "codex" {
+				if err := checkCarriedCodexOwner(in, ls, providers); err != nil {
+					return err
+				}
 			}
 			if in.Agent == "codex" && accountRemoved("codex") || in.Agent == "claude" && accountRemoved("claude") {
 				res.Kept++
@@ -575,12 +671,207 @@ func hasPrefixed(m map[string]bool, prefix string, want bool) bool {
 	return false
 }
 
-func applyPlugins(put []signInRec, gone map[string]bool, seen map[string]string, res *SignInsResult) error {
+// accountAliasOwner includes retired reservations: neither may be shared with
+// a different real workspace by the sign-in import's baseline ID generation.
+func accountAliasOwner(p Provider, id string) bool {
+	for _, b := range p.AccountAliases {
+		if b.AccountID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func checkCarriedCodexOwner(in savedLogin, ls []savedLogin, providers []Provider) error {
+	registry, err := signInRegistry(providers)
+	if err != nil {
+		return err
+	}
+	var p Provider
+	for _, q := range registry {
+		if q.ID == "codex" {
+			p = q
+			break
+		}
+	}
+	allowNew := false
+	for _, q := range providers {
+		if q.ID == "codex" && accountAliasOwner(q, loginID(in)) {
+			email, workspace := codexWho(in.Auth)
+			allowNew = email != "" && workspace != ""
+		}
+	}
+	return checkCodexRoutingOwner(in, ls, p, allowNew)
+}
+
+func checkCodexRoutingOwner(in savedLogin, ls []savedLogin, p Provider, allowNew bool) error {
+	reserved := accountAliasOwner(p, loginID(in))
+	verified := false
+	for _, l := range ls {
+		ea, wa := codexWho(l.Auth)
+		eb, wb := codexWho(in.Auth)
+		same := l.Agent == "codex" && ea != "" && wa != "" && eb != "" && wb != "" && strings.EqualFold(ea, eb) && wa == wb
+		if loginID(l) == loginID(in) && reserved {
+			if !same {
+				return fmt.Errorf("Codex sign-in conflicts with a reserved routing owner")
+			}
+			verified = true
+		}
+		if same && loginID(l) != loginID(in) && (reserved || accountAliasOwner(p, loginID(l))) {
+			return fmt.Errorf("Codex sign-in has inconsistent reserved routing owners")
+		}
+	}
+	if reserved && !verified && !allowNew {
+		return fmt.Errorf("Codex sign-in's reserved routing owner cannot be verified here")
+	}
+	return nil
+}
+
+// signInRegistry combines this computer's owner history with the providers
+// selected for this import, without publishing any provider changes.
+func signInRegistry(providers []Provider) ([]Provider, error) {
+	state := readProviderState()
+	if state.err != nil {
+		return nil, state.err
+	}
+	out := slices.Clone(state.file.Providers)
+	for _, p := range providers {
+		if p.ID == "" || p.ID != Slug(p.ID) || p.ID == "magpie" {
+			continue
+		}
+		i := slices.IndexFunc(out, func(q Provider) bool { return q.ID == p.ID })
+		if i >= 0 {
+			p = KeepSecrets(p, out[i], p.Key == "" && len(p.Keys) == 0)
+			if err := mergeRoutingHistory(&p, out[i]); err != nil {
+				return nil, err
+			}
+			out[i] = p
+		} else {
+			if err := validateRoutingAliases(p); err != nil {
+				return nil, err
+			}
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// CheckSignInsRouting validates the selected incoming alias registry against
+// real saved identities before a caller writes either providers or sign-ins.
+// It does not make unrelated backup parts transactional.
+func CheckSignInsRouting(s *SignIns, providers []Provider) error {
+	if s == nil || len(providers) == 0 {
+		return nil
+	}
+	registry, err := signInRegistry(providers)
+	if err != nil {
+		return err
+	}
+	here, err := CollectSignIns()
+	if err != nil {
+		return err
+	}
+	loginsMu.Lock()
+	ls, err := readLoginsFile()
+	loginsMu.Unlock()
+	if err != nil {
+		return err
+	}
+	localRecords := here.records()
+	identities := append(slices.Clone(ls), s.Logins...)
+	for _, r := range s.records() {
+		if r.login != nil {
+			if r.login.Agent != "codex" {
+				continue
+			}
+			if err := checkCarriedCodexOwner(*r.login, identities, providers); err != nil {
+				return err
+			}
+			in := *r.login
+			if slices.ContainsFunc(ls, func(l savedLogin) bool { return l.ID != "" && l.ID == in.ID && !sameLogin(l, in) }) {
+				in.ID = ""
+				if err := checkCarriedCodexOwner(in, identities, providers); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		local, exists := localRecords[r.id]
+		owners := []signInRec{r}
+		if exists {
+			owners = append(owners, local)
+		}
+		if !pluginReservation(registry, owners...) {
+			continue
+		}
+		if r.owner == nil || r.owner.ID == "" || r.owner.Agent != "plugin:"+plugin.ProviderOf(r.key) || r.owner.Home != r.key {
+			return fmt.Errorf("incoming plugin alias lacks a verifiable routing owner")
+		}
+		if exists && (local.key != r.key || local.owner != nil && local.owner.ID != r.owner.ID) {
+			return fmt.Errorf("incoming plugin alias conflicts with this computer's routing owner")
+		}
+		for _, l := range ls {
+			sameSlot := l.Agent == r.owner.Agent && l.Home == r.key
+			if sameSlot && loginID(l) != r.owner.ID || !sameSlot && loginID(l) == r.owner.ID {
+				return fmt.Errorf("incoming plugin alias conflicts with a saved slot")
+			}
+		}
+	}
+	return nil
+}
+
+// carriedPluginReservation checks only the source and destination owners.
+// Without old-format metadata, any history for that namespace is uncertain.
+func carriedPluginReservation(records ...signInRec) (bool, error) {
+	state := readProviderState()
+	if state.err != nil {
+		return false, state.err
+	}
+	return pluginReservation(state.file.Providers, records...), nil
+}
+
+func pluginReservation(providers []Provider, records ...signInRec) bool {
+	for _, r := range records {
+		id := plugin.ProviderOf(r.key)
+		for _, p := range providers {
+			if p.ID != id && p.ID != PluginID(id) {
+				continue
+			}
+			if r.owner == nil && len(p.AccountAliases) > 0 || r.owner != nil && accountAliasOwner(p, r.owner.ID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func applyPlugins(put []signInRec, gone map[string]bool, seen map[string]string, res *SignInsResult, providers []Provider) error {
 	if len(put) == 0 && !hasPrefixed(gone, "plugin|", true) {
 		return nil
 	}
+	// Publish saved owners before their credentials while holding loginsMu
+	// through EditAuth's publish and cache invalidation. Discovery cannot
+	// drop a not-yet-published slot or mint a replacement owner in between.
+	loginsMu.Lock()
+	defer loginsMu.Unlock()
+	ls, err := readLoginsFile()
+	if err != nil {
+		return err
+	}
+	registry, err := signInRegistry(providers)
+	if err != nil {
+		return err
+	}
+	ownerAt := func(key string) *savedLogin {
+		for i := range ls {
+			if ls[i].Agent == "plugin:"+plugin.ProviderOf(key) && ls[i].Home == key {
+				return &ls[i]
+			}
+		}
+		return nil
+	}
 	return plugin.EditAuth(func(m map[string]json.RawMessage) (bool, error) {
-		changed := false
+		changed, ownersChanged := false, false
 		ids := map[string][]string{} // id → keys here
 		for k, raw := range m {
 			id := pluginRecID(k, raw)
@@ -588,7 +879,8 @@ func applyPlugins(put []signInRec, gone map[string]bool, seen map[string]string,
 		}
 		hashOf := func(id string) string {
 			if ks := ids[id]; len(ks) == 1 {
-				return credHash(m[ks[0]])
+				r := signInRec{hash: credHash(m[ks[0]]), owner: ownerAt(ks[0])}
+				return r.stateHash()
 			}
 			return ""
 		}
@@ -599,31 +891,71 @@ func applyPlugins(put []signInRec, gone map[string]bool, seen map[string]string,
 			}
 			ks := ids[r.id]
 			if raw, ok := m[r.key]; ok && !slices.Contains(ks, r.key) && plugin.AuthWho(raw) == "" {
-				ks = append(ks, r.key) // the same key, whose sign-in doesn't say who
+				ks = append(ks, r.key)
 			}
-			switch len(ks) {
-			case 0:
-				key := r.key
+			if len(ks) > 1 {
+				res.Kept++
+				continue
+			}
+			key := r.key
+			if len(ks) == 1 {
+				key = ks[0]
+			}
+			if len(ks) == 0 {
 				if _, taken := m[key]; taken {
 					key = plugin.ProviderOf(r.key) + "#" + r.hash[:8]
 				}
+			}
+			localOwner := ownerAt(key)
+			owners := []signInRec{r}
+			if localOwner != nil {
+				owners = append(owners, signInRec{key: key, owner: localOwner})
+			}
+			reserved := pluginReservation(registry, owners...)
+			if r.owner != nil {
+				o := *r.owner
+				if o.ID == "" || o.Agent != "plugin:"+plugin.ProviderOf(r.key) || o.Home != r.key {
+					return false, fmt.Errorf("plugin sign-in has invalid routing owner metadata")
+				}
+				// Two unreserved copies may already have different saved IDs.
+				// Keep this machine's slot and owner, as credential merges did.
+				if reserved && (key != r.key || localOwner != nil && loginID(*localOwner) != o.ID) {
+					return false, fmt.Errorf("plugin sign-in slot or routing owner conflict")
+				}
+				if localOwner == nil {
+					for _, l := range ls {
+						if loginID(l) == o.ID {
+							return false, fmt.Errorf("plugin sign-in routing owner already belongs to another slot")
+						}
+					}
+					ls = append(ls, savedLogin{ID: o.ID, Agent: o.Agent, Home: key, User: o.User, On: o.On, First: o.First})
+					ownersChanged = true
+				}
+			} else if reserved && (len(ks) == 0 || key != r.key || localOwner == nil) {
+				return false, fmt.Errorf("plugin sign-in lacks its reserved routing owner")
+			}
+			switch len(ks) {
+			case 0:
 				m[key] = r.raw
 				res.Added++
 				changed = true
 			case 1:
-				if credHash(m[ks[0]]) != r.hash {
-					m[ks[0]] = r.raw
+				if credHash(m[key]) != r.hash {
+					m[key] = r.raw
 					res.Updated++
 					changed = true
 				}
-			default:
-				res.Kept++
 			}
 		}
 		for id := range gone {
-			if ks := ids[id]; strings.HasPrefix(id, "plugin|") && len(ks) == 1 && credHash(m[ks[0]]) == seen[id] {
+			if ks := ids[id]; strings.HasPrefix(id, "plugin|") && len(ks) == 1 && hashOf(id) == seen[id] {
 				delete(m, ks[0])
 				changed = true
+			}
+		}
+		if ownersChanged {
+			if err := writeLogins(ls); err != nil {
+				return false, err
 			}
 		}
 		return changed, nil

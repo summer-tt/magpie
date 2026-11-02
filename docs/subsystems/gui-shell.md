@@ -27,6 +27,40 @@ three.
 | The terminal quitting | `magpie tui` that served the gateway with an agent connected hands the gateway on as it quits, on Linux where nothing opens magpie at login (a WSL distro, a server over SSH; zaidu259434 on X): `keepGateway` starts magpie's service when it is installed, installs it (`daemon.Install`) when the user never removed it (`daemon.Removed`, a mark `magpie daemon uninstall` leaves), and otherwise starts `magpie serve` in its own session (`serveInBackground`, log in magpie's cache). Elsewhere, or with nothing connected, it only says the gateway stopped. Where magpie opens at login (`autostart.Enabled`, which on Linux counts a package's own autostart entry, also on a box no desktop logs into) it leaves the gateway to the app, and the note says `magpie autostart off` has the terminal hand it on where no desktop logs in (`atLoginNote`, #3756). | [`keep.go`](../../internal/tui/keep.go) |
 | The app quitting | A Quit the user chooses (the tray's Quit, the panel's and window's Quit, Command-Q on the Mac) while agents are connected to the gateway this process serves asks first (see [A Quit asks while agents go through magpie](#a-quit-asks-while-agents-go-through-magpie)). Closing the window only hides it: magpie stays in the menu bar or the system tray and the gateway keeps serving, on Windows too. | [`quitask.go`](../../internal/gui/quitask.go), [`quitask_app.go`](../../internal/gui/quitask_app.go), [`quitask.js`](../../internal/gui/assets/quitask.js) |
 
+## Editing account routing aliases
+
+Each account and key row in the provider editor has a separate accessible
+*Routing alias* control (`routingAliasButton` in
+[`app.js`](../../internal/gui/assets/app.js)). Enter submits once, Escape
+cancels without writing, and a server error keeps the input available. The
+control uses the stable routing ID from `/api/providers`, independently of the
+existing display-name editor. An active alias has a keyboard-accessible *Copy
+model reference* button. A single servable model copies immediately; several
+open the existing model menu. `routingModels` supplies complete qualified
+references by owner ID, derived from served entries rather than guessed from a
+key's plan. Copy uses the browser clipboard or the existing copy command, with
+no POST or configuration write. An unset alias in an account or key row has an
+always clickable 22×22px button displaying `@`; its localized DOM text and
+`aria-label` remain the routing-alias label. It stays reachable by keyboard and
+touch without requiring hover or `:focus-visible`; the existing phone rules
+provide at least 44px height. On hover a key row keeps space for its name while
+allowing its masked value to shrink. Subscription accounts with an active
+alias or an open alias editor allow wrapping and place the alias, Copy and
+input group on a line of its own within the account row. Only the visible
+alias text may shorten; Copy keeps its hit area and the input takes the
+available width. DOM and Tab order remain unchanged, even when the visual
+layout wraps. An empty flex spacer does not retain two gaps at zero width;
+with room to grow it still keeps the trailing controls at the right edge.
+
+[`providers.go`](../../internal/gui/providers.go) exposes
+`POST /api/provider/accountalias` with `{id, account, alias}` and
+`POST /api/keys/alias` with `{id, ref, alias}`. Both return the existing provider
+state. The account JSON and login rows expose `id` and `routingAlias`; key rows
+expose the active `routingAlias` beside their existing fingerprint. Empty alias
+retires the current binding and schedules agent catalog refresh. The ownership,
+grammar and native-model compatibility contract is in
+[providers and accounts](providers-accounts.md#account-routing-aliases).
+
 ## Runtime path
 
 1. `magpie` with no arguments, `magpie app` or `magpie tray` calls `runGUI`, which starts the app's log (`startLog`, above) and calls `gui.Run`. A `nogui` build runs the TUI instead. A second launch hands over to the instance already running. On Windows, before any window is made, `webView2Check` asks Wails whether the WebView2 runtime is there (`Env.Info().PlatformInfo["WebView2"]`, "" when its lookup fails; a key Wails doesn't set counts as there). Without it Wails would exit on the first window with nothing on screen, so magpie logs it, shows a Windows message box in the reader's language naming the runtime, Microsoft's download page (`webView2Page`) and `magpie web` / `magpie tui`, opens the page on Yes, and `Run` ends (#1806, `webview2.go`, `TestWebView2MissingFromWails` on Windows). The box can't come from `ErrorHandler`, which runs on the thread Wails makes its windows on.

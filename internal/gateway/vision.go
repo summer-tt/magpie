@@ -273,11 +273,12 @@ func seersRankedHeld(skip func(string) bool, held string) []rankedSeer {
 		if !p.On() || p.DecideOnly() {
 			continue
 		}
-		cs := keptSmallCands(p, "sees", seesAt(p.ID))
+		preview := keptSmallCands(p, "sees", seesAt(p.ID))
+		cs := preview.models
 		if skip != nil {
 			cs = slices.DeleteFunc(slices.Clone(cs), func(c smallCand) bool { return skip(p.ID + "/" + c.id) })
 		}
-		c, ready := smallReadyOf(p, cs, provider.Chat)
+		c, ready := smallReadyWithHealth(p, cs, provider.Chat, preview.health)
 		if c.id == "" {
 			continue
 		}
@@ -831,7 +832,8 @@ func (s *Server) seenBody(ctx context.Context, proto provider.Protocol, body []b
 // holds, what it costs, and whether it has allowance left (smallReady);
 // "" when there is none. kind names keep (keptSmallCands).
 func smallModelWhere(p provider.Provider, kind string, keep func(catalog.Model) bool) (string, float64, bool) {
-	c, ready := smallReadyOf(p, keptSmallCands(p, kind, keep), provider.Chat)
+	preview := keptSmallCands(p, kind, keep)
+	c, ready := smallReadyWithHealth(p, preview.models, provider.Chat, preview.health)
 	if c.id == "" {
 		return "", 0, false
 	}

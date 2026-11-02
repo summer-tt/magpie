@@ -6736,9 +6736,9 @@ function routingPage(part) {
   function matchedBy(patterns, named) {
     const res = patterns.map(patternTest).filter(Boolean);
     const own = new Set(named.map((id) => splitMember(id)[0]));
-    return (groups?.models || []).filter((m) => !own.has(m.id) && res.some((r) => r(m))).map((m) => m.id);
+    return (groups?.models || []).filter((m) => !m.routingAlias && !own.has(m.id) && res.some((r) => r(m))).map((m) => m.id);
   }
-  const patternCount = (p) => { const r = patternTest(p); return r ? (groups?.models || []).filter(r).length : 0; };
+  const patternCount = (p) => { const r = patternTest(p); return r ? (groups?.models || []).filter((m) => !m.routingAlias && r(m)).length : 0; };
   const patternWords = (n) => n ? t(n === 1 ? "1 model" : "{n} models", { n }) : t("matches nothing now");
   // what a group keeps of its members: those it names, not those its
   // patterns matched when it was read — they are found again each time

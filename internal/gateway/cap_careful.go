@@ -82,6 +82,9 @@ func readCareful(ctx context.Context, ps []provider.Provider, models []string) {
 			continue
 		}
 		for _, acct := range append([]provider.Provider{p}, p.AlsoOn()...) {
+			if p.HasRoutingAliases() && !p.RoutingAllows(acct.RoutingID()) {
+				continue
+			}
 			a := acct.Account
 			if a == nil {
 				continue

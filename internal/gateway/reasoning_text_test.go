@@ -294,6 +294,10 @@ func TestForeignReasoningNeverReachesOpenAI(t *testing.T) {
 			} else {
 				codexSignedIn(t)
 			}
+			auth := tc.auth
+			if tc.path == CodexPath+"/responses/compact" && auth == "Bearer chatgpt-token" {
+				auth = "Bearer " + codexAccessToken(t)
+			}
 			if tc.pauseOwn {
 				if err := provider.SetLoginOn("codex", "me@example.com", false); err != nil {
 					t.Fatal(err)
@@ -308,8 +312,8 @@ func TestForeignReasoningNeverReachesOpenAI(t *testing.T) {
 
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest("POST", tc.path, strings.NewReader(switchedBackFromDeepSeek(tc.model)))
-			if tc.auth != "" {
-				req.Header.Set("Authorization", tc.auth)
+			if auth != "" {
+				req.Header.Set("Authorization", auth)
 				req.Header.Set("chatgpt-account-id", "acct-1")
 			}
 			req.Header.Set("session_id", "thread-jue")

@@ -313,6 +313,12 @@ func memberHere(entries []Entry, all []Group, m string) string {
 		}
 		return ""
 	}
+	if _, _, handled, err := resolveRoutingAlias(model); handled {
+		if err != nil {
+			return ""
+		}
+		return m
+	}
 	pid, id, ok := strings.Cut(model, "/")
 	if !ok {
 		return ""
