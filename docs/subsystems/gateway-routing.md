@@ -1757,6 +1757,15 @@ most). It is asked with the time left of a quarter of the search's limit, and
 `plugin.RunSearch` returns when that is out, though the plugin's own fetch may
 run on until the host's abort reaches it. `TestPluginSearchAPI`.
 
+A search API that signs in as a plugin provider (`SearchVendor.Auth`) takes
+that provider's ordinary accounts through `accountsOn`; an active routing
+alias leaves its account out. Before each host call, `askPluginSearchAs`
+checks `routingSendError`, so a stale selected account or an old backup of
+an unreadable current providers file cannot authorize a search.
+`TestRoutingAliasPluginSearchChecksCurrentAccount` checks a successful ordinary
+search, alias exclusion, a binding changed after selection, and a corrupt
+current file with a valid backup from before the alias.
+
 ## The search APIs' order, and one switched off
 
 `provider.SearchAPIs` gives the search APIs in their saved order, the
