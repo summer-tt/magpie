@@ -59,16 +59,52 @@ func (p Provider) ModelRef(model string) string {
 
 // BaseModelRef is ref with its routing-alias qualifier ("p/m@work")
 // taken off: the base ref a call of it is recorded by (usage's Provider
-// and Model), whichever account the alias picked. A ref that names no
-// alias serving now is itself: unqualified, a native id that keeps its
-// own "@" (a number marker), or an alias that is off, retired or gone,
-// whose requests fail resolution on their own.
+// and Model), whichever account the alias picks and whether it picks one
+// now — a cleared alias or a gone key keeps its row in the registry, so
+// the spelling still names that alias's model. It is the registry that
+// decides, not whether the alias can be routed: nothing is sent here. A
+// ref that names no registered alias is itself: unqualified, a native id
+// that keeps its own "@" (a number marker), one a native id and a
+// registered alias both spell (which no request resolves either), or an
+// alias never bound — never a suffix merely trimmed off.
 func BaseModelRef(ref string) string {
-	p, m, ok := Resolve(ref)
-	if !ok || p.RoutingAlias() == "" {
+	ref = strings.TrimSuffix(strings.TrimSpace(ref), "[1m]")
+	pid, model, ok := strings.Cut(ref, "/")
+	if !ok {
 		return ref
 	}
-	return p.ID + "/" + m
+	at, alias := routingAliasTail(model)
+	if at < 0 {
+		return ref
+	}
+	p := lookIn(All(), pid)
+	if p == nil {
+		return ref
+	}
+	_, aliasBound := p.AccountAliases[alias]
+	if _, keyBound := p.KeyAliases[alias]; keyBound {
+		aliasBound = true
+	}
+	known := false
+	for _, m := range p.Available() {
+		if m.ID == model {
+			known = true
+			break
+		}
+	}
+	for _, m := range p.Models {
+		if m == model {
+			known = true
+			break
+		}
+	}
+	if known || nativeAtNumber.MatchString(model[at+1:]) {
+		return ref
+	}
+	if aliasBound {
+		return p.ID + "/" + model[:at]
+	}
+	return ref
 }
 
 // RoutingID uses the saved plugin slot's identity, whose label may change.

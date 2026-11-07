@@ -166,8 +166,12 @@ func counts(r usage.Record) bool {
 // windows no limit counts in now are let go. A window two limits of the
 // same models share (a day and a week on a Monday, a day and a month on
 // the 1st) is kept once, as Append adds a call to each one kept (#2942).
-// Called with state held.
-func sumsFor(keyID string, ls []*access.Limit, starts []time.Time) []*sums {
+// Called with state held. Each limit's models are given (modelsOf), read
+// before the lock: the provider lookups scopeModels takes stay out of the
+// critical section, and what a window counts by is the same list its
+// reservations are held by and its spent scopes name, whether the window
+// was read now or kept from before.
+func sumsFor(keyID string, ls []*access.Limit, starts []time.Time, models [][]string) []*sums {
 	k := slot(keyID)
 	kept := state.sums[k]
 	out := make([]*sums, len(starts))
@@ -184,7 +188,7 @@ func sumsFor(keyID string, ls []*access.Limit, starts []time.Time) []*sums {
 		if j := at(kept, start, scope); j >= 0 {
 			out[i] = kept[j]
 		} else {
-			out[i] = read(keyID, start, ls[i])
+			out[i] = read(keyID, start, ls[i], models[i])
 		}
 		next = append(next, out[i])
 	}
@@ -192,12 +196,10 @@ func sumsFor(keyID string, ls []*access.Limit, starts []time.Time) []*sums {
 	return out
 }
 
-// read is what keyID's calls of l's models came to from start.
-func read(keyID string, start time.Time, l *access.Limit) *sums {
-	s := &sums{start: start, scope: l.Scope()}
-	if l.Scoped() {
-		s.models = scopeModels(l)
-	}
+// read is what keyID's calls of the models l's budget counts by
+// (modelsOf, scopeModels) came to from start.
+func read(keyID string, start time.Time, l *access.Limit, models []string) *sums {
+	s := &sums{start: start, scope: l.Scope(), models: models}
 	cost := usage.NewCoster()
 	usage.Visit(start, func(r usage.Record) {
 		// a key issued under keyID spends from its limits too
@@ -348,7 +350,7 @@ func AllOf(keys []access.Key, now time.Time) [][]Status {
 				x = &want{w: w}
 				x.prefix = sums{start: start, scope: l.Scope()}
 				if l.Scoped() {
-					x.prefix.models = scopeModels(l)
+					x.prefix.models = scopeModelsOf(l)
 				}
 				kept.Lock()
 				// window keys a start by its second: what was kept is
@@ -590,14 +592,19 @@ func Reserve(who access.Identity, body int64, model string, now time.Time) (rele
 func reserve(who access.Identity, body int64, model string, now time.Time) (release func(), refused *Refusal) {
 	// a limit of some models holds a request only when it names one of
 	// them; one through a routing group is held by the gateway leaving
-	// the spent ones' models out of its candidates (Spent)
+	// the spent ones' models out of its candidates (Spent). Both the ids
+	// the request would be answered by and the scopes' own models are
+	// read here, before the state lock, so the provider lookups they take
+	// stay out of the critical section.
 	served := servedAs(model)
-	if who.KeyID == "" || len(who.Limits()) == 0 {
+	limits := who.Limits()
+	if who.KeyID == "" || len(limits) == 0 {
 		return func() {}, nil
 	}
+	models := modelsOf(limits)
 	state.Lock()
 	defer state.Unlock()
-	ls, starts, resets, ss := windowsOf(who, now, func(l *access.Limit) bool { return !l.Scoped() || scopeHas(l, served) })
+	ls, starts, resets, ss := windowsOf(who, now, models, func(l *access.Limit, s *sums) bool { return !l.Scoped() || s.has(served) })
 	if len(ls) == 0 {
 		return func() {}, nil
 	}
@@ -706,13 +713,37 @@ func servedAs(model string) []string {
 	return out
 }
 
-// scopeHas says one of ids is among l's models, as scopeModels counts
-// them: by the ids a call is recorded by, so a scope of a model named
-// by a routing alias holds the model's requests, qualified or not.
-func scopeHas(l *access.Limit, ids []string) bool {
-	ms := scopeModels(l)
+// modelsOf is ls's limits each with the models its budget counts by
+// (scopeModels; nil for a limit of the whole key), read before the
+// state lock so the provider lookups it takes stay out of the critical
+// section: what a window counts by is settled once per check, and is
+// then the same list its reservations are held by and its spent scopes
+// name, whether the window was read now or kept from before.
+func modelsOf(ls []*access.Limit) [][]string {
+	out := make([][]string, len(ls))
+	for i, l := range ls {
+		if l.Scoped() {
+			out[i] = scopeModels(l)
+		}
+	}
+	return out
+}
+
+// scopeModelsOf is modelsOf of one limit.
+func scopeModelsOf(l *access.Limit) []string {
+	if !l.Scoped() {
+		return nil
+	}
+	return scopeModels(l)
+}
+
+// has says one of ids is among the models s counts its calls by, so a
+// request is held by exactly the scope its calls accumulate in — a scope
+// of a model named by a routing alias holds the model's requests,
+// qualified or not.
+func (s *sums) has(ids []string) bool {
 	for _, id := range ids {
-		if access.ModelAllowed(ms, id) {
+		if access.ModelAllowed(s.models, id) {
 			return true
 		}
 	}
@@ -732,12 +763,14 @@ func Spent(who access.Identity, now time.Time) []access.SpentScope {
 }
 
 func spentOf(who access.Identity, now time.Time) []access.SpentScope {
-	if who.KeyID == "" || !slices.ContainsFunc(who.Limits(), (*access.Limit).Scoped) {
+	limits := who.Limits()
+	if who.KeyID == "" || !slices.ContainsFunc(limits, (*access.Limit).Scoped) {
 		return nil
 	}
+	models := modelsOf(limits) // read before the state lock, as reserve does
 	state.Lock()
 	defer state.Unlock()
-	ls, starts, resets, ss := windowsOf(who, now, (*access.Limit).Scoped)
+	ls, starts, resets, ss := windowsOf(who, now, models, func(l *access.Limit, s *sums) bool { return l.Scoped() })
 	var out []access.SpentScope
 	for i, l := range ls {
 		s, h := ss[i], state.held[window{slot(who.KeyID), starts[i].Unix(), l.Scope()}]
@@ -758,17 +791,20 @@ func spentOf(who access.Identity, now time.Time) []access.SpentScope {
 // and reset and its sums. The sums of every limit are asked for, the ones
 // left out too: sumsFor lets go of a window no limit asked for counts in,
 // and a request of one model would read another's limit's again from the
-// ledger on the next. Called with state held.
-func windowsOf(who access.Identity, now time.Time, keep func(*access.Limit) bool) (ls []*access.Limit, starts, resets []time.Time, ss []*sums) {
+// ledger on the next. models is the limits' scopeModels (modelsOf), read
+// before the state lock; keep is told each limit with its sums, so it
+// holds a request by the very models its window counts by. Called with
+// state held.
+func windowsOf(who access.Identity, now time.Time, models [][]string, keep func(*access.Limit, *sums) bool) (ls []*access.Limit, starts, resets []time.Time, ss []*sums) {
 	all := who.Limits()
 	allStarts := make([]time.Time, len(all))
 	allResets := make([]time.Time, len(all))
 	for i, l := range all {
 		allStarts[i], allResets[i] = l.Window(now)
 	}
-	allSums := sumsFor(who.KeyID, all, allStarts)
+	allSums := sumsFor(who.KeyID, all, allStarts, models)
 	for i, l := range all {
-		if keep(l) {
+		if keep(l, allSums[i]) {
 			ls = append(ls, l)
 			starts = append(starts, allStarts[i])
 			resets = append(resets, allResets[i])
