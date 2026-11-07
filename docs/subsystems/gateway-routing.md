@@ -736,8 +736,11 @@ usage log match (`scopeModels` adds a model's other ids, and a model named by
 a routing alias, `p/m@work`, as its base ref `p/m`, read from the saved alias
 registry by `provider.BaseModelRef` — cleared aliases keep a retired binding
 there, so the scope stays the base model's when the alias is cleared or its
-account is gone; a native id's own `@`, `p/m@500k`, stays literal, and an
-alias never bound counts nothing). `budget.reserve` holds a request to it
+account is gone or the provider later lists the alias spelling as a native
+model. Such a collision still refuses the qualified request with 409; it does
+not change the budget's existing base identity. An unregistered native id's
+own `@`, such as `p/m@500k` or `p/m@latest`, stays literal, and an alias never
+bound counts nothing). `budget.reserve` holds a request to it
 only when the model it names resolves to one of them
 (`servedAs`; a group, `auto/` or unknown name holds nothing there), by the
 same scope list its calls count in, whether the window's sums were read now

@@ -64,9 +64,10 @@ func (p Provider) ModelRef(model string) string {
 // the spelling still names that alias's model. It is the registry that
 // decides, not whether the alias can be routed: nothing is sent here. A
 // ref that names no registered alias is itself: unqualified, a native id
-// that keeps its own "@" (a number marker), one a native id and a
-// registered alias both spell (which no request resolves either), or an
-// alias never bound — never a suffix merely trimmed off.
+// that keeps its own "@", or an alias never bound — never a suffix
+// merely trimmed off. A registered alias keeps its base identity even
+// if the provider later lists the same spelling as a native model;
+// request resolution still refuses that ambiguity.
 func BaseModelRef(ref string) string {
 	ref = strings.TrimSuffix(strings.TrimSpace(ref), "[1m]")
 	pid, model, ok := strings.Cut(ref, "/")
@@ -84,22 +85,6 @@ func BaseModelRef(ref string) string {
 	_, aliasBound := p.AccountAliases[alias]
 	if _, keyBound := p.KeyAliases[alias]; keyBound {
 		aliasBound = true
-	}
-	known := false
-	for _, m := range p.Available() {
-		if m.ID == model {
-			known = true
-			break
-		}
-	}
-	for _, m := range p.Models {
-		if m == model {
-			known = true
-			break
-		}
-	}
-	if known || nativeAtNumber.MatchString(model[at+1:]) {
-		return ref
 	}
 	if aliasBound {
 		return p.ID + "/" + model[:at]
