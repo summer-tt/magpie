@@ -106,7 +106,7 @@ func TestScopedLimitCountsARoutingAliasModelAsItsBase(t *testing.T) {
 // memory and a restart's fresh read alike, and a reservation taken
 // under the scope is kept whole and given back.
 func TestScopedLimitKeepsCountingWhenTheAliasGoes(t *testing.T) {
-	for _, tc := range []string{"alias cleared", "bound key gone"} {
+	for _, tc := range []string{"alias cleared", "bound key gone", "native model collision"} {
 		t.Run(tc, func(t *testing.T) {
 			who := aliasKey(t, access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@work"}})
 			key := access.Key{ID: who.KeyID, Limit: who.Limit, More: who.More}
@@ -125,12 +125,16 @@ func TestScopedLimitKeepsCountingWhenTheAliasGoes(t *testing.T) {
 				if err := provider.SetKeyRoutingAlias("alias-relay", provider.KeyID("k-work"), ""); err != nil {
 					t.Fatal(err)
 				}
-			case "bound key gone":
+			case "bound key gone", "native model collision":
 				p, err := provider.Find("alias-relay")
 				if err != nil {
 					t.Fatal(err)
 				}
-				p.Keys = nil
+				if tc == "bound key gone" {
+					p.Keys = nil
+				} else {
+					p.Models = append(p.Models, "m@work")
+				}
 				if err := provider.Save(*p); err != nil {
 					t.Fatal(err)
 				}
@@ -177,7 +181,16 @@ func TestScopedLimitKeepsCountingWhenTheAliasGoes(t *testing.T) {
 func TestScopedLimitOfANativeAtAndAnUnboundAliasStayLiteral(t *testing.T) {
 	who := aliasKey(t,
 		access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@500k"}},
-		access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@nope"}})
+		access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@nope"}},
+		access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@latest"}})
+	p, err := provider.Find("alias-relay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Models = append(p.Models, "m@latest")
+	if err := provider.Save(*p); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	call := func(model string, n int) {
 		t.Helper()
@@ -185,12 +198,13 @@ func TestScopedLimitOfANativeAtAndAnUnboundAliasStayLiteral(t *testing.T) {
 	}
 	call("m", 350)
 	call("m@500k", 350)
+	call("m@latest", 350)
 	all := All(access.Key{ID: who.KeyID, Limit: who.Limit, More: who.More}, now)
 	by := map[string]Status{}
 	for _, st := range all {
 		by[strings.Join(st.Models, ",")] = st
 	}
-	if len(by) != 2 || by["alias-relay/m@500k"].Tokens != 350 || by["alias-relay/m@nope"].Tokens != 0 {
+	if len(by) != 3 || by["alias-relay/m@500k"].Tokens != 350 || by["alias-relay/m@latest"].Tokens != 350 || by["alias-relay/m@nope"].Tokens != 0 {
 		t.Fatalf("statuses %+v", all)
 	}
 	// the base model's calls are the native marker's scope's neither
