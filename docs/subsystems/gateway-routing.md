@@ -732,9 +732,16 @@ with it off, a key held to a limit gets 503 and nothing is sent. A limit can cou
 only some models (`access.Limit.Models`, zola_xynb on X), `<provider>/<model>`
 or `<provider>/*`: its sums are kept per window and scope (`sums.scope`,
 `window.scope`), and count a call only when the provider and model in the
-usage log match (`scopeModels` adds a model's other ids). `budget.reserve`
-holds a request to it only when the model it names resolves to one of them
-(`servedAs`; a group, `auto/` or unknown name holds nothing there). Before
+usage log match (`scopeModels` adds a model's other ids, and a model named by
+a routing alias, `p/m@work`, as its base ref `p/m`, read from the saved alias
+registry by `provider.BaseModelRef` — cleared aliases keep a retired binding
+there, so the scope stays the base model's when the alias is cleared or its
+account is gone; a native id's own `@`, `p/m@500k`, stays literal, and an
+alias never bound counts nothing). `budget.reserve` holds a request to it
+only when the model it names resolves to one of them
+(`servedAs`; a group, `auto/` or unknown name holds nothing there), by the
+same scope list its calls count in, whether the window's sums were read now
+or kept from before. Before
 the reservation, `keyLimited` puts the key's spent ones on the caller
 (`withSpent`, `budget.Spent` through `gwbudget.Spender`, its issuer's too,
 `access.Identity.Spent`), `count_tokens` included. Then `keyHolds` holds the
