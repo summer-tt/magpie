@@ -220,7 +220,7 @@ func modelAllowed(who access.Identity, p provider.Provider, model string) bool {
 
 // modelListed is modelAllowed by the key's models alone.
 func modelListed(who access.Identity, p provider.Provider, model string) bool {
-		allowed := func(id string) bool {
+	allowed := func(id string) bool {
 		return allows(who, p.ModelRef(id)) || p.RoutingAlias() != "" && allows(who, p.ID+"/"+id)
 	}
 	if allowed(model) {
