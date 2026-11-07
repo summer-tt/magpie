@@ -27,9 +27,12 @@
 //     in each window.
 //   - A limit can count only some models' calls (access.Limit.Models,
 //     zola_xynb on X): "<provider>/<model>" or "<provider>/*", matched
-//     against the provider and model that answered each call. A request
-//     that names such a model is refused here once that limit is spent,
-//     and holds its reservation there; a routing group's, or a fallback's,
+//     against the provider and model that answered each call — a model
+//     named by a routing alias ("p/m@work") as its base ref ("p/m"), as
+//     a call is recorded by the base whichever account the alias picked.
+//     A request that names such a model, by either spelling, is refused
+//     here once that limit is spent, and holds its reservation there; a
+//     routing group's, or a fallback's,
 //     goes on to the models outside it, as the gateway leaves a spent
 //     limit's models out of every route's candidates (Spent). A group's
 //     request holds no reservation in a model's limit, so parallel
@@ -87,12 +90,21 @@ func (s *sums) counts(r usage.Record) bool {
 
 // scopeModels is the patterns l counts by: its own, and for a model the
 // user lists by an id of their own (provider.SetModelID) the provider's
-// id of it and back, as calls are recorded by the provider's.
+// id of it and back, as calls are recorded by the provider's. A model
+// named by a routing alias ("p/m@work", provider.BaseModelRef) counts
+// as its base ref, as a call of it is recorded by the base whichever
+// account answered.
 func scopeModels(l *access.Limit) []string {
 	out := slices.Clone(l.Models)
 	for _, m := range l.Models {
 		if strings.Contains(m, "*") {
 			continue
+		}
+		if base := provider.BaseModelRef(m); base != m {
+			m = base
+			if !slices.Contains(out, m) {
+				out = append(out, m)
+			}
 		}
 		pid, model, ok := strings.Cut(m, "/")
 		if !ok {
@@ -694,10 +706,13 @@ func servedAs(model string) []string {
 	return out
 }
 
-// scopeHas says one of ids is among l's models.
+// scopeHas says one of ids is among l's models, as scopeModels counts
+// them: by the ids a call is recorded by, so a scope of a model named
+// by a routing alias holds the model's requests, qualified or not.
 func scopeHas(l *access.Limit, ids []string) bool {
+	ms := scopeModels(l)
 	for _, id := range ids {
-		if access.ModelAllowed(l.Models, id) {
+		if access.ModelAllowed(ms, id) {
 			return true
 		}
 	}
