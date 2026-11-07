@@ -466,6 +466,9 @@ func (s *Server) dsResolve(ctx context.Context, p provider.Provider, to provider
 // in dsFileTTL. Its deadline grows with the image: a slow line takes a
 // while, but an upload that hangs doesn't hold the turn for ever.
 func (s *Server) dsUpload(ctx context.Context, p provider.Provider, to provider.Protocol, im dsImage) (dsFileRef, error) {
+	if err := routingSendError(p); err != nil {
+		return dsFileRef{}, err
+	}
 	data, err := base64.StdEncoding.DecodeString(im.b64)
 	if err != nil {
 		if data, err = base64.RawStdEncoding.DecodeString(im.b64); err != nil {
@@ -505,7 +508,7 @@ func (s *Server) dsUpload(ctx context.Context, p provider.Provider, to provider.
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", userAgentFor(p, ""))
-	res, err := p.Do(s.client, req)
+	res, err := p.Do(s.client, routingRequest(req, p))
 	if err != nil {
 		return dsFileRef{}, err
 	}
