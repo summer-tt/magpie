@@ -98,18 +98,108 @@ func TestScopedLimitCountsARoutingAliasModelAsItsBase(t *testing.T) {
 	}
 }
 
-// A limit scoped by a routing alias whose binding is gone counts
-// nothing, as its requests fail resolution on their own, and the base
-// model's calls are another scope's to count.
-func TestScopedLimitOfAGoneAliasCountsNothing(t *testing.T) {
-	who := aliasKey(t, access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@work"}})
-	if err := provider.SetKeyRoutingAlias("alias-relay", provider.KeyID("k-work"), ""); err != nil {
-		t.Fatal(err)
+// A limit scoped by a routing alias keeps counting the model when the
+// alias goes — cleared, which leaves a retired binding in the registry,
+// or its key gone while the ordinary one still serves the model: the
+// scope stays the base model's, what the window counted stays counted
+// and a base request is refused by the same limit, in the sums kept in
+// memory and a restart's fresh read alike, and a reservation taken
+// under the scope is kept whole and given back.
+func TestScopedLimitKeepsCountingWhenTheAliasGoes(t *testing.T) {
+	for _, tc := range []string{"alias cleared", "bound key gone"} {
+		t.Run(tc, func(t *testing.T) {
+			who := aliasKey(t, access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@work"}})
+			key := access.Key{ID: who.KeyID, Limit: who.Limit, More: who.More}
+			now := time.Now()
+			// a request in flight: a 200-token reservation under the scope
+			release, r := Reserve(who, 800, "alias-relay/m@work", now)
+			if r != nil {
+				t.Fatal(r)
+			}
+			// its window's calls settle at the cap
+			for range 2 {
+				Append(usage.Record{Time: now, Provider: "alias-relay", Model: "m", Requested: "alias-relay/m@work", Input: 350, Status: 200, CallerKeyID: who.KeyID})
+			}
+			switch tc {
+			case "alias cleared":
+				if err := provider.SetKeyRoutingAlias("alias-relay", provider.KeyID("k-work"), ""); err != nil {
+					t.Fatal(err)
+				}
+			case "bound key gone":
+				p, err := provider.Find("alias-relay")
+				if err != nil {
+					t.Fatal(err)
+				}
+				p.Keys = nil
+				if err := provider.Save(*p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// what the window counted and holds is kept, hot as it is
+			all := All(key, now)
+			if len(all) != 1 || all[0].Tokens != 700 || !all[0].Spent || all[0].InFlight != 1 || all[0].Reserved != 200 {
+				t.Fatalf("%s: status %+v", tc, all)
+			}
+			if release, r := Reserve(who, -1, "alias-relay/m", now); r == nil {
+				release()
+				t.Fatalf("%s: a base request was let in past the cap", tc)
+			} else if !strings.Contains(r.Error(), "alias-relay/m@work") {
+				t.Fatalf("%s: a base request refused by another limit: %q", tc, r)
+			}
+			// the reservation is given back whole
+			release()
+			if all = All(key, now); len(all) != 1 || all[0].InFlight != 0 || all[0].Reserved != 0 {
+				t.Fatalf("%s: status after the release %+v", tc, all)
+			}
+			// and a restart's fresh read of the ledger counts the same
+			Forget()
+			all = All(key, time.Now())
+			if len(all) != 1 || all[0].Tokens != 700 || !all[0].Spent {
+				t.Fatalf("%s: status after a restart %+v", tc, all)
+			}
+			if release, r := Reserve(who, -1, "alias-relay/m", time.Now()); r == nil {
+				release()
+				t.Fatalf("%s: a base request was let in past the cap after a restart", tc)
+			}
+			sp := Spent(who, time.Now())
+			if len(sp) != 1 || !access.ModelAllowed(sp[0].Models, "alias-relay/m") || sp[0].Reset.IsZero() {
+				t.Fatalf("%s: spent %+v", tc, sp)
+			}
+		})
 	}
+}
+
+// A scope's "@" is not trimmed as a matter of string handling: a native
+// number marker ("alias-relay/m@500k") stays the literal model it names
+// — its records count, the base model's don't, and a base request is
+// not held by it — and an alias never bound counts nothing, as its
+// requests fail resolution on their own.
+func TestScopedLimitOfANativeAtAndAnUnboundAliasStayLiteral(t *testing.T) {
+	who := aliasKey(t,
+		access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@500k"}},
+		access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@nope"}})
 	now := time.Now()
-	Append(usage.Record{Time: now, Provider: "alias-relay", Model: "m", Input: 350, Status: 200, CallerKeyID: who.KeyID})
+	call := func(model string, n int) {
+		t.Helper()
+		Append(usage.Record{Time: now, Provider: "alias-relay", Model: model, Input: n, Status: 200, CallerKeyID: who.KeyID})
+	}
+	call("m", 350)
+	call("m@500k", 350)
 	all := All(access.Key{ID: who.KeyID, Limit: who.Limit, More: who.More}, now)
-	if len(all) != 1 || all[0].Tokens != 0 {
-		t.Fatalf("status %+v", all)
+	by := map[string]Status{}
+	for _, st := range all {
+		by[strings.Join(st.Models, ",")] = st
+	}
+	if len(by) != 2 || by["alias-relay/m@500k"].Tokens != 350 || by["alias-relay/m@nope"].Tokens != 0 {
+		t.Fatalf("statuses %+v", all)
+	}
+	// the base model's calls are the native marker's scope's neither
+	if release, r := Reserve(who, -1, "alias-relay/m", now); r != nil {
+		t.Fatal("a base request was held by a native marker's scope:", r)
+	} else {
+		release()
+	}
+	if sp := Spent(who, now); len(sp) != 0 {
+		t.Fatalf("spent %+v", sp)
 	}
 }
