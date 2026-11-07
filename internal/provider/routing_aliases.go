@@ -57,6 +57,20 @@ func (p Provider) ModelRef(model string) string {
 	return ref
 }
 
+// BaseModelRef is ref with its routing-alias qualifier ("p/m@work")
+// taken off: the base ref a call of it is recorded by (usage's Provider
+// and Model), whichever account the alias picked. A ref that names no
+// alias serving now is itself: unqualified, a native id that keeps its
+// own "@" (a number marker), or an alias that is off, retired or gone,
+// whose requests fail resolution on their own.
+func BaseModelRef(ref string) string {
+	p, m, ok := Resolve(ref)
+	if !ok || p.RoutingAlias() == "" {
+		return ref
+	}
+	return p.ID + "/" + m
+}
+
 // RoutingID uses the saved plugin slot's identity, whose label may change.
 // AccountID remains the existing gateway-key identity for compatibility.
 func (p Provider) RoutingID() string {
