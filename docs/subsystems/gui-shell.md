@@ -31,7 +31,10 @@ three.
 
 Each account and key row in the provider editor has a separate accessible
 *Routing alias* control (`routingAliasButton` in
-[`app.js`](../../internal/gui/assets/app.js)). Enter submits once, Escape
+[`app.js`](../../internal/gui/assets/app.js)), which loads
+[`routingalias.js`](../../internal/gui/assets/routingalias.js) when the editor
+draws an account or key row. The module fills that row's own control. Enter
+submits once, Escape
 cancels without writing, and a server error keeps the input available. The
 control uses the stable routing ID from `/api/providers`, independently of the
 existing display-name editor. An active alias has a keyboard-accessible *Copy
