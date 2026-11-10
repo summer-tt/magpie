@@ -949,7 +949,7 @@ func (s *Server) drawingTries(g provider.Group, ms []provider.Member, keeps map[
 	cs, _ := s.planGroup(g.Live(), ms, provider.Chat)
 	for _, c := range cs {
 		for _, m := range ms {
-			if m.Provider.ID == c.p.ID && m.Model == c.model && memberHeld(c, m, g) == "" && add(m) {
+			if m.Provider.ModelRef(m.Model) == c.p.ModelRef(c.model) && memberHeld(c, m, g) == "" && add(m) {
 				break
 			}
 		}
