@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -222,6 +223,11 @@ func TestRoutingAliasSignInsCompatBundleIncomingOwner(t *testing.T) {
 // The target has already saved this AuthWho under a different initial label.
 // Reservation arrives only in the sealed source bundle, after sign-in apply.
 func TestRoutingAliasSignInsCompatBundlePluginIncomingOwner(t *testing.T) {
+	old := addPlugins
+	t.Cleanup(func() { addPlugins = old })
+	addPlugins = func(context.Context, []plugin.Entry) ([]string, map[string]error) {
+		return nil, nil // synthetic plugins need no installation for the restore checks
+	}
 	t.Cleanup(func() { plugin.UseCached(nil) })
 	const spec = "@example/opencode-acme-auth"
 	publish := func(label, token string, expires int64) {
