@@ -4,9 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
 // Alias bindings retain their owner after retirement so old references cannot
@@ -22,8 +23,8 @@ type KeyAliasBinding struct {
 }
 type routingSelection struct{ alias, account, owner string }
 
-var routingAliasPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
-var nativeAtNumber = regexp.MustCompile(`^[0-9]+[kKmM]?$`)
+var routingAliasPattern = lazyre.New(`^[a-z][a-z0-9._-]{0,31}$`)
+var nativeAtNumber = lazyre.New(`^[0-9]+[kKmM]?$`)
 var routingAliasMu sync.Mutex
 
 // RoutingError carries the HTTP classification for a model reference rejected
