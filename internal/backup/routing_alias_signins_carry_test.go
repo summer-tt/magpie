@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -16,6 +17,11 @@ import (
 // This package verifies the real sealed backup boundary, which provider's
 // tests cannot import without a cycle. Discovery, not the fixture, assigns IDs.
 func TestRoutingAliasSignInsCarrySealedPluginBackup(t *testing.T) {
+	old := addPlugins
+	t.Cleanup(func() { addPlugins = old })
+	addPlugins = func(context.Context, []plugin.Entry) ([]string, map[string]error) {
+		return nil, nil // synthetic plugins need no installation for the restore checks
+	}
 	for _, withAlias := range []bool{false, true} {
 		name := "no-alias"
 		if withAlias {
