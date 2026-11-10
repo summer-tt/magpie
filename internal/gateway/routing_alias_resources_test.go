@@ -330,3 +330,25 @@ func TestRoutingAliasUsageHeadersPriceAndOptionalOTLP(t *testing.T) {
 		t.Error("enabled local OTLP collector lost existing Requested attribute")
 	}
 }
+
+// Account restrictions can leave only the second alias eligible. Drawing must
+// keep the planner's qualified reference when mapping it back to a member.
+func TestRoutingAliasDrawingOrderKeepsAccountIntersection(t *testing.T) {
+	_, _, update := routingAliasFixture(t)
+	update(map[string]any{"a": routingAliasBinding("k-work", true), "b": routingAliasBinding("k-ordinary", true)})
+	if err := provider.SaveGroup(provider.Group{ID: "alias-drawing-order", Name: "Alias drawing order", Members: []string{"alias-relay/m@a#" + provider.KeyID("k-ordinary"), "alias-relay/m@b#" + provider.KeyID("k-ordinary")}, Routing: provider.Ordered}); err != nil {
+		t.Fatal(err)
+	}
+	g, ms, ok := provider.FindGroup("group/alias-drawing-order")
+	if !ok || len(ms) != 2 {
+		t.Fatalf("group members: ok=%v members=%v", ok, ms)
+	}
+	got := New().drawingTries(g, ms, nil, func(provider.Provider, string) bool { return true })
+	if len(got) != 2 || got[0].Provider.ModelRef(got[0].Model) != "alias-relay/m@b" {
+		var refs []string
+		for _, m := range got {
+			refs = append(refs, m.Provider.ModelRef(m.Model))
+		}
+		t.Fatalf("eligible drawing member must lead: %v", refs)
+	}
+}
