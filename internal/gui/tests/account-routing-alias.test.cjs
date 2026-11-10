@@ -61,6 +61,7 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ["chromium", 
           await page.locator(".editor .accts .acc").first().waitFor();
           const label = await page.evaluate(() => t("Routing alias"));
           const entries = page.locator(".editor").getByRole("button", { name: label, exact: true }).or(page.locator(".editor").getByRole("textbox", { name: label, exact: true }));
+          await entries.nth(count - 1).waitFor();
           assert.equal(await entries.count(), count, "every account/key, including the first and a single account, has a separate Routing alias editor");
           for (let i = 0; i < count; i++) {
             // Existing account rows may retain their display identity; route owner comes from JSON id.
@@ -510,6 +511,7 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ["chromium", 
           const label = await page.evaluate(() => t("Routing alias"));
           const copyLabel = await page.evaluate(() => t("Copy model reference"));
           const aliasButton = maxRow.getByRole("button", { name: label, exact: true });
+          await aliasButton.waitFor();
           assert.equal(await aliasButton.count(), 1, "the Max row has its routing-alias entry");
 
           if (state === "empty") {
