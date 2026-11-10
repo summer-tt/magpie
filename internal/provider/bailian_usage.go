@@ -53,10 +53,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
 const (
@@ -415,7 +416,7 @@ func bailianSuccessCode(code string) bool {
 // bailianCredentials matches the shapes a console token and an AccessKey
 // ID are written in, for an error that must be safe to show even where
 // the value isn't at hand.
-var bailianCredentials = regexp.MustCompile(`\b(ct-|LTAI)[A-Za-z0-9._~+/=-]{4,}`)
+var bailianCredentials = lazyre.New(`\b(ct-|LTAI)[A-Za-z0-9._~+/=-]{4,}`)
 
 // bailianClean is s for an error a card shows: the values given, a
 // console token's or an AccessKey ID's shape, and anything past a
