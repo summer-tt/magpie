@@ -85,6 +85,33 @@ func TestRoutingAliasQualifiedUnmaskedIgnoresUnreachableFallback(t *testing.T) {
 	}
 }
 
+// A group built around the base model is a fallback for ordinary
+// requests only. A qualified request keeps its bound route for both
+// the masking decision and the set maskedFor uses for route identity.
+func TestRoutingAliasQualifiedUnmaskedIgnoresUnreachableGroup(t *testing.T) {
+	near := routingAliasPreflightFixture(t)
+	near.Fallback = nil
+	if err := provider.Save(near); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.SaveGroup(provider.Group{ID: "mixed", Name: "Mixed", Members: []string{"near/m", "spare/m"}}); err != nil {
+		t.Fatal(err)
+	}
+	if unredactedRoute(near, "m", false, nil) || MaskRoute("near/m") {
+		t.Fatal("control: an ordinary request must account for its masked fallback group")
+	}
+	q, model, err := provider.ResolveModel("near/m@work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unredactedRoute(q, model, false, nil) || !MaskRoute("near/m@work") {
+		t.Error("a qualified request was masked for an unreachable group")
+	}
+	if after := afterMembers(q, model); len(after) != 0 {
+		t.Errorf("qualified route identity includes unreachable members: %+v", after)
+	}
+}
+
 // readCareful reads again the usage of the capped accounts a careful
 // request may go to. A qualified request reads only its bound owner's
 // usage; an ordinary request, whose pool excludes the alias-isolated
