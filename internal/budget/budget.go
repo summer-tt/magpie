@@ -355,8 +355,10 @@ func AllOf(keys []access.Key, now time.Time) [][]Status {
 				kept.Lock()
 				// window keys a start by its second: what was kept is
 				// another limit's when that one started in the same
-				// second (a 10-day limit made a 5-hour one at once)
-				if e, ok := kept.of[w]; ok && e.prefix.start.Equal(start) {
+				// second (a 10-day limit made a 5-hour one at once).
+				// An alias first registered since the last read changes
+				// the models counted: read the full ledger again then.
+				if e, ok := kept.of[w]; ok && e.prefix.start.Equal(start) && slices.Equal(e.prefix.models, x.prefix.models) {
 					x.prefix, x.cur = e.prefix, e.cur
 				}
 				kept.Unlock()
