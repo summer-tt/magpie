@@ -239,8 +239,8 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ["chromium", 
 // t("Copy model reference"), to put the whole provider/model@alias on the
 // clipboard for a model that account serves — here the one model the
 // provider lists, copied as itself, with no effort or window appended. It
-// is reached and used from the keyboard, fits 360px, and writes nothing:
-// no POST leaves the page. A row without an alias is not required to have
+// is reached and used from the keyboard, fits 360px, and writes no settings.
+// The window's update/using signal is not a copy action. A row without an alias is not required to have
 // one. The label, the entry point's shape and any menu of several models
 // are the production author's; what is pinned is the name, the row, the
 // copied reference itself and that it is the user's keyboard to use.
@@ -248,7 +248,7 @@ function serveWrites(lang, providers, writes) {
   const inner = serve(lang, providers, []);
   return async (route) => {
     const u = new URL(route.request().url());
-    if (u.pathname.startsWith("/api/") && route.request().method() === "POST") writes.push(u.pathname);
+    if (u.pathname.startsWith("/api/") && u.pathname !== "/api/update/using" && route.request().method() === "POST") writes.push(u.pathname);
     return inner(route);
   };
 }
@@ -451,13 +451,13 @@ function rowFitFixture(alias) {
     accountWeights: { "max@example.com": 3, "pro@example.com": 1 },
   }], presets: [], excluded: [], gateway: { running: true, window: true } };
 }
-// Record every POST the page makes, including the alias save; serve() still
-// answers the alias route and redraws from the same provider object.
+// Record page writes, including the alias save, apart from the window's
+// update/using signal; serve() answers the alias route and redraws the row.
 function serveRowFit(lang, data, posts) {
   const inner = serve(lang, data, []);
   return async (route) => {
     const req = route.request(), u = new URL(req.url());
-    if (req.method() === "POST") posts.push({ path: u.pathname, body: req.postData() ? JSON.parse(req.postData()) : null });
+    if (req.method() === "POST" && u.pathname !== "/api/update/using") posts.push({ path: u.pathname, body: req.postData() ? JSON.parse(req.postData()) : null });
     return inner(route);
   };
 }
