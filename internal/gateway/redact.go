@@ -462,7 +462,7 @@ func unredactedRoute(p provider.Provider, model string, isGroup bool, ms []provi
 // it.
 func afterMembers(p provider.Provider, model string) []provider.Member {
 	ms := provider.FallbackModels(p)
-	if model == "" {
+	if model == "" || p.RoutingAlias() != "" {
 		return ms
 	}
 	for _, gid := range provider.GroupsAfter(p.ID + "/" + model) {
