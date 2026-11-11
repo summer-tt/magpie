@@ -173,6 +173,42 @@ func TestScopedLimitKeepsCountingWhenTheAliasGoes(t *testing.T) {
 	}
 }
 
+// A status read before an alias exists must not keep its literal scope
+// after registration makes the same scope count base-model records. Both
+// records already on disk and calls since registration count on the next
+// read, through All and the batched AllOf.
+func TestScopedStatusCountsAfterRoutingAliasRegistration(t *testing.T) {
+	for _, batched := range []bool{false, true} {
+		t.Run(map[bool]string{false: "All", true: "AllOf"}[batched], func(t *testing.T) {
+			who := aliasKey(t, access.Limit{Period: "day", Tokens: 700, Models: []string{"alias-relay/m@later"}})
+			key := access.Key{ID: who.KeyID, Limit: who.Limit, More: who.More}
+			now := time.Now()
+			statuses := func() []Status {
+				if batched {
+					return AllOf([]access.Key{key}, now)[0]
+				}
+				return All(key, now)
+			}
+			call := func() {
+				Append(usage.Record{Time: now, Provider: "alias-relay", Model: "m", Input: 350, Status: 200, CallerKeyID: who.KeyID})
+			}
+			call()
+			if got := statuses(); len(got) != 1 || got[0].Tokens != 0 {
+				t.Fatalf("unbound alias counted base usage: %+v", got)
+			}
+			if err := provider.SetKeyRoutingAlias("alias-relay", provider.KeyID("k-work"), "later"); err != nil {
+				t.Fatal(err)
+			}
+			call()
+			for range 2 {
+				if got := statuses(); len(got) != 1 || got[0].Tokens != 700 || got[0].Calls != 2 || !got[0].Spent {
+					t.Fatalf("registered alias did not recount base usage: %+v", got)
+				}
+			}
+		})
+	}
+}
+
 // A scope's "@" is not trimmed as a matter of string handling: a native
 // number marker ("alias-relay/m@500k") stays the literal model it names
 // — its records count, the base model's don't, and a base request is

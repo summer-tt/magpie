@@ -84,7 +84,7 @@ func TestAllOfIsWhatEachWindowRead(t *testing.T) {
 			}
 			for j, l := range ls {
 				start, _ := l.Window(now)
-				want := read(k.ID, start, l)
+				want := read(k.ID, start, l, scopeModelsOf(l))
 				got := all[i][j]
 				if got.Calls != want.calls || got.Tokens != want.tokens(l) || got.Cost != want.cost {
 					t.Fatalf("%s: key %d limit %d (%s): got %d calls %d tokens, read %d calls %d tokens", when, i, j, l.Period, got.Calls, got.Tokens, want.calls, want.tokens(l))
@@ -131,7 +131,7 @@ func BenchmarkReadEach(b *testing.B) {
 		for _, k := range ks {
 			for _, l := range k.Limits() {
 				start, _ := l.Window(now)
-				read(k.ID, start, l)
+				read(k.ID, start, l, scopeModelsOf(l))
 			}
 		}
 	}
