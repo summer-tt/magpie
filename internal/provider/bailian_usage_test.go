@@ -578,7 +578,7 @@ func TestBailianPlanContextCanceled(t *testing.T) {
 // bailianProviderOf is a provider of Bailian's personal plan with the
 // access key given, for a read that needn't be saved.
 func bailianProviderOf(id, ak, sk string) Provider {
-	return Provider{ID: id, Name: id, Chat: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+	return Provider{ID: id, Name: id, Preset: "bailian-token-plan", Chat: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
 		Key: "sk-sp-" + id, AccessKeyID: ak, SecretAccessKey: sk}
 }
 

@@ -27,6 +27,10 @@ three.
 | The terminal quitting | `magpie tui` that served the gateway with an agent connected hands the gateway on as it quits, on Linux where nothing opens magpie at login (a WSL distro, a server over SSH; zaidu259434 on X): `keepGateway` starts magpie's service when it is installed, installs it (`daemon.Install`) when the user never removed it (`daemon.Removed`, a mark `magpie daemon uninstall` leaves), and otherwise starts `magpie serve` in its own session (`serveInBackground`, log in magpie's cache). Elsewhere, or with nothing connected, it only says the gateway stopped. Where magpie opens at login (`autostart.Enabled`, which on Linux counts a package's own autostart entry, also on a box no desktop logs into) it leaves the gateway to the app, and the note says `magpie autostart off` has the terminal hand it on where no desktop logs in (`atLoginNote`, #3756). | [`keep.go`](../../internal/tui/keep.go) |
 | The app quitting | A Quit the user chooses (the tray's Quit, the panel's and window's Quit, Command-Q on the Mac) while agents are connected to the gateway this process serves asks first (see [A Quit asks while agents go through magpie](#a-quit-asks-while-agents-go-through-magpie)). Closing the window only hides it: magpie stays in the menu bar or the system tray and the gateway keeps serving, on Windows too. | [`quitask.go`](../../internal/gui/quitask.go), [`quitask_app.go`](../../internal/gui/quitask_app.go), [`quitask.js`](../../internal/gui/assets/quitask.js) |
 
+The provider editor loads [`accesskey.js`](../../internal/gui/assets/accesskey.js)
+when it draws an account access key form. The module keeps the saved Secret
+private, edits the shared draft and follows the selected plan region.
+
 ## Editing account routing aliases
 
 Each account and key row in the provider editor has a separate accessible
