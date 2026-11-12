@@ -43,7 +43,7 @@ func (f *zenRetryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, zenRetryAsk{r.URL.Host + r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("x-api-key"), body.Model})
 	f.mu.Unlock()
-	if strings.HasPrefix(r.URL.Path, "/zen/go/") {
+	if strings.HasPrefix(r.URL.Path, "/inference/go/") {
 		return &http.Response{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}},
 			Body: io.NopCloser(strings.NewReader(goUnavailable))}, nil
 	}
@@ -66,7 +66,7 @@ func zenRetryServer(t *testing.T) (*Server, *zenRetryTransport) {
 	t.Helper()
 	fresh(t)
 	if err := provider.Save(provider.Provider{ID: "go", Name: "OpenCode Go", Preset: "opencode-go", Key: "sk-go-users-own",
-		Chat: "https://opencode.ai/zen/go/v1", Responses: "https://opencode.ai/zen/go/v1", Anthropic: "https://opencode.ai/zen/go",
+		Chat: provider.OpenCodeGoChat, Responses: provider.OpenCodeGoChat, Anthropic: provider.OpenCodeGoAnthropic,
 		Models: []string{"deepseek-v4.1-flash-free"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +89,8 @@ func TestRoutingAliasOrdinaryOpenCodeZenRetryStillServes(t *testing.T) {
 	// The model's dispatch lands on whichever of Go's APIs the provider
 	// legitimately speaks for it (Messages or Chat); the retry is the same
 	// request at Zen's free tier beside it, as upstream's fixture maps it.
-	want := map[string]string{"opencode.ai/zen/go/v1/messages": "opencode.ai/inference/anthropic/v1/messages",
-		"opencode.ai/zen/go/v1/chat/completions": "opencode.ai/inference/openai/v1/chat/completions"}
+	want := map[string]string{"opencode.ai/inference/go/anthropic/v1/messages": "opencode.ai/inference/anthropic/v1/messages",
+		"opencode.ai/inference/go/openai/v1/chat/completions": "opencode.ai/inference/openai/v1/chat/completions"}
 	if len(a) != 2 || want[a[0].url] == "" || a[1].url != want[a[0].url] {
 		t.Fatalf("ordinary retry attempts: %+v; want Go then Zen's free tier", a)
 	}
@@ -115,7 +115,7 @@ func TestRoutingAliasQualifiedOpenCodeGoRefusalDoesNotFallBackToZen(t *testing.T
 	}
 	rec := goClaudeAsk(s, "go/deepseek-v4.1-flash-free@work")
 	a := asked.take()
-	if len(a) != 1 || !strings.HasPrefix(a[0].url, "opencode.ai/zen/go/") {
+	if len(a) != 1 || !strings.HasPrefix(a[0].url, "opencode.ai/inference/go/") {
 		t.Fatalf("qualified attempts after Go's refusal: %+v; want the initial Go request only", a)
 	}
 	if !strings.Contains(a[0].auth+a[0].apiKey, "sk-go-users-own") || strings.Contains(a[0].auth+a[0].apiKey, "public") {
