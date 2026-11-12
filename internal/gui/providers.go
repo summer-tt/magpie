@@ -489,7 +489,7 @@ type moveJSON struct {
 }
 
 // accessKeyJSON is a provider's account access key as the editor sees
-// it: whose ("volcengine", "tencent", "bailian"), the ID, and whether a
+// it: whose ("volcengine", "tencent", "alibaba"), the ID, and whether a
 // Secret is saved, never the Secret.
 type accessKeyJSON struct {
 	Vendor    string `json:"vendor"`
@@ -498,7 +498,7 @@ type accessKeyJSON struct {
 }
 
 // presetAccessKey is whose account access key a preset's plans are read
-// with ("volcengine", "tencent", "bailian", "" for none) and, when only
+// with ("volcengine", "tencent", "alibaba", "" for none) and, when only
 // some of its regions are such a plan (Tencent Cloud's Token Plan 企业版
 // beside its personal plan and pay as you go, #1574), their ids; nil when
 // all are.
