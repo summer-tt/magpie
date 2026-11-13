@@ -504,6 +504,8 @@ for (const engine of process.env.BROWSER ? [process.env.BROWSER] : ["chromium", 
           const proRow = page.locator('.editor .accts .acc[data-account-id="pro@example.com"]');
           assert.equal((await maxRow.locator(".plan").textContent()).trim(), "Claude Max", "the first account is the Max plan");
           assert.equal((await proRow.locator(".plan").textContent()).trim(), "Claude Pro", "the second is the Pro plan");
+          const advanced = page.locator(".editor details.more").first();
+          if (!(await advanced.evaluate((el) => el.open))) await advanced.locator("summary").click();
           const by = await page.evaluate(() => t("By weight"));
           await page.locator(".editor").getByRole("button", { name: by, exact: true }).click();
           await page.locator(".editor .acc .key-weight").first().waitFor();
