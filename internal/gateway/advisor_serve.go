@@ -232,6 +232,9 @@ func (s *Server) advise(ctx context.Context, q *Request, said []Part, model stri
 	// the caller named the advisor's model, not magpie's settings, so it is
 	// asked as the caller: the key's models and limits hold it (no
 	// magpieChose, which a search's or a title's model takes)
+	// The advisor names its own model and account. Bind that request anew,
+	// retaining the caller's permissions and limits, not the executor's alias.
+	ctx = context.WithValue(ctx, routingConstraintKey{}, nil)
 	r, err := http.NewRequestWithContext(ownAsk(ctx), http.MethodPost, "http://magpie/v1/messages", nil)
 	if err != nil {
 		return "", errAdvice{"unavailable", err}
