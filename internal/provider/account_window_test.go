@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestAccountWindowFromLastReading(t *testing.T) {
 	now := time.Now().Round(time.Second)
 	reset := now.Add(2 * time.Hour)
 	week := now.Add(3 * 24 * time.Hour)
-	keepLast(SubscriptionQuota{Provider: "codex", Name: "Codex", User: "Me@example.com", Windows: []QuotaWindow{
+	keepLast(context.Background(), SubscriptionQuota{Provider: "codex", Name: "Codex", User: "Me@example.com", Windows: []QuotaWindow{
 		{Name: "5h", Used: 40, ResetsAt: &reset, Span: 5 * time.Hour},
 		{Name: "Weekly", Used: 10, ResetSecs: int64(week.Sub(now) / time.Second)},
 		{Name: "Credits", Display: "12", Text: true},
