@@ -27,7 +27,7 @@ func TestRoutingAliasSignInsMetadata(t *testing.T) {
 			var source, target state
 			sync := func(st *state) {
 				t.Helper()
-				if err := syncOnce(context.Background(), cfg, st); err != nil {
+				if err := syncOnce(context.Background(), cfg, st, nil); err != nil {
 					t.Fatal(err)
 				}
 			}

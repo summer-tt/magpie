@@ -514,6 +514,9 @@ func bailianConsoleCall(ctx context.Context, token, api string, secret ...string
 		if strings.Contains(said, "NotLogined") {
 			return nil, errBailianNotLogined
 		}
+		if strings.Contains(said, "NotAuthorised") || strings.Contains(said, "NotAuthorized") {
+			return nil, fmt.Errorf("Bailian: the console gateway said %s: %s", said, aliRAMHint)
+		}
 		return nil, fmt.Errorf("Bailian: the console gateway said %s", said)
 	}
 	inner := env.Data.DataV2.Data

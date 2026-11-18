@@ -7105,7 +7105,7 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	res, err := send(req)
 	if dict != nil {
 		// a body the other magpie couldn't decode goes again whole
-		res, err = dict.after(req, res, err, again)
+		res, err = dict.after(req, res, err, send)
 	}
 	if err == nil && res.StatusCode >= 400 && provider.OpenCodeURL(req.URL.String()) {
 		logOpenCodeRefusal(p, req, res.StatusCode)

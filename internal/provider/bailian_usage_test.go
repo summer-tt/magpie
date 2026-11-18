@@ -1104,3 +1104,19 @@ func TestBailianLongSecretsKeepNoPrefix(t *testing.T) {
 // The editor is told whose access key a provider takes, and the Secret
 // never comes back: /api/providers is read by internal/gui's
 // TestProviderListTellsBailianAccessKey.
+
+// Beijing's monthly reader retains the RAM permissions guidance from the
+// shared Alibaba reader when the console refuses the account.
+func TestBailianGatewayRAMNotAuthorised(t *testing.T) {
+	bailianTest(t)
+	v := newBailianVendor(t, map[string]string{"LTAIram": "SK"})
+	v.payload = func(ak, api string) (string, bool) {
+		return `RAW:{"code":"200","data":{"success":false,"errorCode":"BailianGateway.Team.NotAuthorised","errorMsg":"team not authorised"}}`, true
+	}
+	q := bailianPlanQuota(context.Background(), bailianProviderOf("bl-ram", "LTAIram", "SK"))
+	for _, want := range []string{"BailianGateway.Team.NotAuthorised", "AliyunTokenPlanReadOnlyAccess", "AliyunBSSReadOnlyAccess", "Account Management", "Administrator or Subscription plan", "main account's own AccessKey"} {
+		if !strings.Contains(q.Error, want) {
+			t.Errorf("%q doesn't say %q", q.Error, want)
+		}
+	}
+}
