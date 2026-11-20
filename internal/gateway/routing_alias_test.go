@@ -207,6 +207,39 @@ func TestRoutingAliasCatalogKeepsBaseAndAddsQualified(t *testing.T) {
 		t.Errorf("catalog base=%v qualified=%v; both must be discoverable", base, qualified)
 	}
 }
+func TestRoutingAliasModelListDistinguishesQualifiedDisplayName(t *testing.T) {
+	_, h, _ := routingAliasFixture(t)
+	r := httptest.NewRequest("GET", "http://localhost/v1/models", nil)
+	r.RemoteAddr = "127.0.0.1:12345"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("list models: %d %s", w.Code, w.Body.String())
+	}
+	var listing struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			Label       string `json:"magpie_label"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{}
+	for _, model := range listing.Data {
+		if model.ID == "alias-relay/m" || model.ID == "alias-relay/m@work" {
+			names[model.ID] = model.DisplayName
+			if !strings.HasSuffix(model.Label, " · Alias relay") {
+				t.Errorf("%s magpie_label = %q, want provider suffix", model.ID, model.Label)
+			}
+		}
+	}
+	if names["alias-relay/m"] != "m" || names["alias-relay/m@work"] != "m@work" {
+		t.Errorf("model display names = %v, want m and m@work at their original IDs", names)
+	}
+}
+
 func TestRoutingAliasNativeAtRemainsPlain(t *testing.T) {
 	for _, model := range []string{"m@500k", "m@20260801", "@cf/vendor/m", "m@work/submodel"} {
 		t.Run(model, func(t *testing.T) {
