@@ -340,7 +340,10 @@ A qualified reference cannot enable generation on a Usage only provider
 `Catalog` and `Served` derive qualified entries from base entries without
 adding them to vendor model lists or automatic group matching. A derived
 `Entry` has `RoutingAlias` and `BaseID`, retains the base `Model` and model
-capabilities, and carries the account constraint in its provider view. See
+capabilities, and carries the account constraint in its provider view. The
+standard `/v1/models` listing appends `@<alias>` to a qualified entry's
+`display_name` so clients can distinguish it in a picker. Requests and saved
+selections continue to use the model `id`. See
 [gateway routing](gateway-routing.md) for candidate and fallback semantics,
 [agent wiring](agent-wiring.md) for configuration IDs, and
 [sync and backup](sync-backup.md) for owner history during restore.

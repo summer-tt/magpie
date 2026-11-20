@@ -2134,6 +2134,8 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 				// by display_name alone
 				if agent == "cindy" || agent == "dim" || discovers {
 					m["display_name"] = labels[i]
+				} else if e.RoutingAlias != "" {
+					m["display_name"] = e.PlainName() + "@" + e.RoutingAlias
 				}
 				if agent == "cursor-local" {
 					cursorLocalModel(m, e)
