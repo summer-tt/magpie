@@ -1090,7 +1090,11 @@ func fetchPage(ctx context.Context, url, key string, anthropic bool, headers map
 		}
 		input := imageInput(ins)
 		apis := EndpointAPIs(r.Endpoints)
-		if native := EndpointAPIs(r.Native); len(native) > 0 {
+		// a routing group's native_endpoints are advice on one API to ask
+		// it on, not the APIs it is served on (liveModel.Group), so they
+		// are not made its APIs, as they were none before the list said
+		// them of a group; magpie_prefers is still read (Model.Prefers)
+		if native := EndpointAPIs(r.Native); len(native) > 0 && r.Group != true {
 			apis = native
 		}
 		if len(apis) == 0 {
@@ -1185,8 +1189,19 @@ type liveModel struct {
 	// reasoning levels. any, as a vendor's odd value mustn't lose the
 	// whole list
 	Native []string `json:"native_endpoints"`
-	Output any      `json:"max_output_tokens"`
-	Levels any      `json:"supported_reasoning_levels"`
+	// Group marks a row of another magpie's list that is one of its
+	// routing groups (magpie_group), wherever it is a group of the user's
+	// own or one magpie found (auto/<model>): said by the magpie that
+	// listed it, as its id alone says so only there. Such a row's
+	// native_endpoints are the APIs every member relays as it is, told for
+	// a client that asks each model on one API, and are not the APIs the
+	// group is served on: a request for it goes on in the client's own API
+	// for that magpie to pick the member (TestRemoteMagpieNativeAPI).
+	// any, and true alone is a group, as another list's odd value under
+	// the name mustn't lose the whole list
+	Group  any `json:"magpie_group"`
+	Output any `json:"max_output_tokens"`
+	Levels any `json:"supported_reasoning_levels"`
 	// another magpie's name for the model with its provider there after
 	// it, and "image", "video" or "decision" for its other models
 	Label string `json:"magpie_label"`

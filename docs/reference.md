@@ -1706,8 +1706,9 @@ Disconnect puts every key back as it was. It runs in moejs like middleware.
 same names: `native_endpoints`, the gateway paths a request for it goes on
 untranslated, and `pricing`, USD a token as decimal strings, so an agent
 can ask a model on the API that passes straight through and show what a
-call costs. Each is left out when it isn't known (a routing group has no
-`native_endpoints`, an unpriced model no `pricing`), never empty or 0:
+call costs. Each is left out when it isn't known (a routing group whose
+members share no API has no `native_endpoints`, an unpriced model no
+`pricing`), never empty or 0:
 
 ```json
 { "id": "deepseek/pro", "name": "pro · DeepSeek", "context": 0, "output": 0, "images": false, "efforts": [],
@@ -2800,8 +2801,27 @@ so the effort the group is asked for reaches the members that take it and
 doesn't turn a vendor away as a 400; a member nothing speaks for is sent
 what the agent asked, as before. `native_endpoints`
 (`["/v1/messages"]`) names the APIs a request for the model is passed
-straight through on; it is left out of a routing group, and of a model every
-request to which is translated anyway.
+straight through on; it is left out of a model every request to which is
+translated anyway. A routing group's are the APIs every member takes a
+request on as it is, a group in the group opened to its models
+(`provider.GroupEndpoints`), and are left out when the members share none.
+`magpie_prefers` is the path the model is best asked on here: a model's,
+its provider's own best API; a routing group's, `/v1/responses` where its
+members all take a Responses request as it is, or where `GroupAPI` wires an
+agent there though they share none (a member best on Responses, every other
+translating anyway). A group that shares Chat alone, or Messages alone,
+recommends nothing, and neither does a model translated anyway. Both are
+told to every client of the list, not to another magpie alone, and whether
+or not the drawers were asked for (`X-Magpie-Drawers`), as they are about
+chat APIs and say nothing of drawing. A group's row is also marked
+`"magpie_group": true`: another magpie that has this one as its provider
+reads the mark, of a group of the user's own or one magpie found
+(`auto/<model>`) alike, and keeps a request for it going on in the
+client's own API for this one to pick the member, rather than translating
+it to the one API the members share before it is passed on
+(`TestRemoteMagpieNativeAPI`). The mark is trusted only as the boolean
+`true`; another value under the name marks nothing and loses no row.
+`GET /v1/models/{id}` says of a model what the list does.
 
 A client that takes a custom endpoint only as an Ollama server (Visual
 Studio's and VS Code's Copilot: Manage Models, then Ollama) is given

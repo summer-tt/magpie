@@ -78,6 +78,47 @@ func TestFetchMagpieFields(t *testing.T) {
 	}
 }
 
+// A routing group's row in another magpie's list is marked magpie_group,
+// a group of the user's own or one magpie found alike, and its
+// native_endpoints, the APIs every member relays, are not made the APIs
+// it is served on: a request for it goes on in the client's own API for
+// that magpie to pick the member. A model's row, marked or not by a list
+// from before, keeps native_endpoints as its APIs. A value under the
+// name that isn't true marks nothing, and loses no row of the list.
+func TestFetchMagpieGroupIsNotServedOnItsNativeAPIs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Write([]byte(`{"object":"list","data":[
+		  {"id":"group/fast","magpie_group":true,"native_endpoints":["/v1/messages"],"magpie_prefers":"/v1/responses"},
+		  {"id":"auto/gpt-5.5","magpie_group":true,"native_endpoints":["/v1/responses"]},
+		  {"id":"anthropic/claude-opus-4-8","native_endpoints":["/v1/messages"]},
+		  {"id":"odd/group","magpie_group":"yes","native_endpoints":["/v1/chat/completions"]},
+		  {"id":"odd/auto","magpie_group":{"a":1},"native_endpoints":["/v1/chat/completions"]},
+		  {"id":"plain","magpie_prefers":"/v1/chat/completions"}]}`))
+	}))
+	defer srv.Close()
+	ms, _, err := FetchAt(context.Background(), srv.URL+"/v1", "k", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, m := range ms {
+		got[m.ID] = fmt.Sprint(m.APIs, m.Prefers)
+	}
+	want := map[string]string{
+		// the groups': no APIs, the preference kept
+		"group/fast":                "[]responses",
+		"auto/gpt-5.5":              "[]",
+		"anthropic/claude-opus-4-8": "[anthropic]",
+		// a value that isn't true marks no group: the APIs as a model's
+		"odd/group": "[chat]",
+		"odd/auto":  "[chat]",
+		"plain":     "[]chat",
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("got %v", got)
+	}
+}
+
 // A base with a version in its path (Ark's /api/plan/v3, tcdw's report) is
 // asked for its list only as written: no /v1 is put on it, and a failure
 // names the URL asked and what the vendor said. A base without one is

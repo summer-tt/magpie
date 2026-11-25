@@ -455,9 +455,11 @@ func buildModels(agent string) []catalog.Model {
 		m.Endpoints = provider.NativeEndpoints(e)
 		if e.Group != "" {
 			// a group's, the APIs every member relays as it is
-			// (provider.GroupEndpoints), which /v1/models leaves out: a
-			// remote magpie sends a group's request on in the client's
-			// API, for the other side to pick per member
+			// (provider.GroupEndpoints), as /v1/models says of it too.
+			// They are advice on one API to ask the group on, not the
+			// only ones it takes: a remote magpie sends a group's request
+			// on in the client's API, for the other side to pick per
+			// member (the list marks the row magpie_group for that)
 			m.Endpoints = provider.GroupEndpoints(members(e.ID))
 		}
 		// Codex's /fast on a ChatGPT account's own GPT model, which

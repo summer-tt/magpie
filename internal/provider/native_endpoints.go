@@ -24,6 +24,9 @@ func NativeEndpoints(e Entry) []string {
 // GroupAPI wires an agent to, Responses where its members are best there.
 // "" for a model translated anyway, or a group that stays on Chat.
 // members is nil when the group's aren't known.
+//
+// The gateway's list tells a model's with it, and a group's by its own
+// groupTold, which recommends Responses where the members share it too.
 func PreferredEndpoint(e Entry, members func(id string) []Member) string {
 	if e.Group == "" {
 		return endpointOf[e.Provider.Native(e.Model)]

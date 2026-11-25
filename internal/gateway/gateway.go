@@ -1634,7 +1634,8 @@ func modelObject(e provider.Entry) map[string]any {
 	// for another magpie that has this one as its provider (remote-magpie):
 	// the APIs a request for the model goes on as it is, so it sends each
 	// one on an API of these rather than having it translated twice, and
-	// whether it takes images
+	// whether it takes images. A routing group's are what groupTold adds,
+	// which needs its members
 	if native := provider.NativeEndpoints(e); len(native) > 0 {
 		m["native_endpoints"] = native
 	}
@@ -1651,6 +1652,47 @@ func modelObject(e provider.Entry) map[string]any {
 		m["modalities"] = mod
 	}
 	return m
+}
+
+// groupTold says of a routing group's row, on GET /v1/models and GET
+// /v1/models/{id}, what a client that asks every model on one API reads:
+// the APIs every member takes a request on as it is (native_endpoints,
+// provider.GroupEndpoints; nested groups opened by the finder), and the
+// one this list recommends (magpie_prefers), Responses. It is left out,
+// both, when the members share no API and none is recommended, and for a
+// model that is no group, whose row modelObject made already.
+//
+// Responses is recommended where the members share it, or where
+// provider.GroupAPI wires an agent there although they share none (a
+// member best on Responses, every other translating anyway). A group that
+// shares Chat alone, or Messages alone, recommends nothing, as the list
+// always did: Chat is what a client falls back to, and another magpie
+// reading a Chat here translated a Messages request to Chat before it
+// passed a group on (#997). GroupAPI itself is not changed.
+//
+// The row is marked "magpie_group": true, as its id alone says whether it
+// is a group only of the magpie that listed it (auto/<model> is a group
+// there or not by its own providers). Another magpie that has this one as
+// its provider reads the mark, and keeps a group's request going on in
+// the client's API for this one to pick the member: read as the APIs the
+// group is served on, native_endpoints had it translated to the one the
+// members share before it was passed on (TestRemoteMagpieNativeAPI).
+func groupTold(m map[string]any, e provider.Entry, find func(id string) (provider.Group, []provider.Member, bool)) {
+	if e.Group == "" || find == nil {
+		return
+	}
+	_, ms, ok := find(e.ID)
+	if !ok {
+		return
+	}
+	m["magpie_group"] = true
+	shared := provider.GroupEndpoints(ms)
+	if len(shared) > 0 {
+		m["native_endpoints"] = shared
+	}
+	if slices.Contains(shared, "/v1/responses") || provider.GroupAPI(ms) == provider.Responses {
+		m["magpie_prefers"] = "/v1/responses"
+	}
 }
 
 // toolsTold says, in an OpenAI-compatible list, that a chat model takes
@@ -1723,10 +1765,18 @@ func (rs modelRows) row(e provider.Entry, label string) map[string]any {
 }
 
 // pricedModelObject is modelObject with the model's pricing, as the list
-// gives it, for the callers the list tells it to.
+// gives it, for GET /v1/models/{id}'s row: as the list does (GET
+// /v1/models), it says of a routing group the APIs every member relays
+// and the one the list recommends.
 func pricedModelObject(r *http.Request, e provider.Entry) map[string]any {
 	m := modelObject(e)
 	toolsTold(m, e)
+	groupTold(m, e, provider.GroupFinder())
+	if e.Group == "" {
+		if pe := provider.PreferredEndpoint(e, nil); pe != "" {
+			m["magpie_prefers"] = pe
+		}
+	}
 	if local(r) || sharedWith(r) {
 		if pr, ok := provider.EntryPriceIn(settings.Load(), provider.GroupFinder(), e); ok {
 			m["pricing"] = catalog.OpenRouterPricing(pr)
@@ -2036,15 +2086,11 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 			// the tiers Codex here is offered on each model (#1234), for every
 			// client: another magpie offers them to its own Codex, and Cindy
 			// shows its Fast switch on a model whose tiers hold priority
-			// (#1914). A model with none says nothing (modelRows)
 			rs := newModelRows(r, shown)
-			// each routing group's members, looked up once a list, for
-			// another magpie's magpie_prefers
-			var membersOf func(string) []provider.Member
-			if magpie {
-				find := provider.FoundOnce(provider.GroupFinder())
-				membersOf = func(id string) []provider.Member { _, ms, _ := find(id); return ms }
-			}
+			// each routing group's members, looked up once a list, for what
+			// its row says of the APIs every member relays and of the one
+			// the list recommends (groupTold)
+			find := provider.FoundOnce(provider.GroupFinder())
 			// each model by its bare id as well, after the provider/model ids,
 			// when the user asked for it (settings.BareModelIDs): a client
 			// moved from another proxy asks for gpt-5.6-sol (love1sbug on X).
@@ -2093,6 +2139,20 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 				}
+				// the API it is best asked on here, which native_endpoints'
+				// order doesn't say: a model's, its provider's own best
+				// one, "" for one translated anyway; a routing group's,
+				// with the APIs every member relays, what groupTold says.
+				// Told to every caller of the list, not to another magpie
+				// alone, and whether or not the drawers were asked for: it
+				// is about chat APIs and says nothing of drawing
+				if e.Group == "" {
+					if pe := provider.PreferredEndpoint(e, nil); pe != "" {
+						m["magpie_prefers"] = pe
+					}
+				} else {
+					groupTold(m, e, find)
+				}
 				if magpie {
 					if how := webSearchOf(e, searches); how != "" {
 						m["web_search"] = how
@@ -2105,12 +2165,6 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 					// magpies, for one that names its models by it
 					// (provider.UpstreamNames, lcc580 on X)
 					m["magpie_by"] = e.ServedBy()
-					// the API it is best asked on here, which
-					// native_endpoints' order doesn't say: that magpie's
-					// agents are wired to it (OoopsHh on X)
-					if pe := provider.PreferredEndpoint(e, membersOf); pe != "" {
-						m["magpie_prefers"] = pe
-					}
 				}
 				// for DeepSeek Harness: the same name as its name. Its
 				// Models page's model discovery (llm-pi-ai's readListing)
