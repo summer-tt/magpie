@@ -514,6 +514,31 @@ func qualifiedEntries(base []Entry) []Entry {
 	return out
 }
 
+// MergeRoutingHistory validates an incoming registry before any restore
+// writes. Entries absent from the selected version survive as retired
+// reservations.
+//
+// in is the version selected: a name it has keeps the owner and the
+// active state it says there. A name only here has is put into in, let go
+// (inactive), under the owner here gave it, so a name one computer stops
+// using is not taken up by another owner on the next. The same name with
+// another owner on the two is an error, and in is then as it was read: a
+// file holding both could be brought in nowhere, and the two registries
+// are merged on a copy.
+//
+// Sync uses it both ways with ProviderSettingsHere on (davsync's
+// keepServersOwn, and MirrorKeepingSettings): which account a name is
+// bound to is a setting and stays on the computer that set it, while the
+// names and their owners are kept on every one.
+func MergeRoutingHistory(in *Provider, here Provider) error {
+	next := *in
+	if err := mergeRoutingHistory(&next, here); err != nil {
+		return err
+	}
+	*in = next
+	return nil
+}
+
 // mergeRoutingHistory validates an incoming registry before any restore writes.
 // Entries absent from the selected version survive as retired reservations.
 func mergeRoutingHistory(in *Provider, here Provider) error {

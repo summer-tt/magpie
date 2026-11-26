@@ -40,7 +40,10 @@ type TestPick struct {
 // for a test: those on in routing's order, then those off. An account
 // is turned on to take requests at once, so it is tested off first
 // (tmr11235 on X: "我想先测试能不能用再开"). None when p has only one,
-// and it on.
+// and it on: a test on its own already goes to it. Not so for one that
+// a routing alias is bound to, which the ordinary pool leaves out: a test
+// on its own fails there, and only one on the account reaches it, so the
+// one account is offered.
 func (p Provider) TestPicks() []TestPick {
 	var out []TestPick
 	if p.Account != nil {
@@ -58,7 +61,10 @@ func (p Provider) TestPicks() []TestPick {
 		// those on first, as routing asks them
 		slices.SortStableFunc(out, func(a, b TestPick) int { return cmpBool(a.Off, b.Off) })
 	}
-	if len(out) < 2 && !slices.ContainsFunc(out, func(k TestPick) bool { return k.Off }) {
+	if len(out) < 2 && !slices.ContainsFunc(out, func(k TestPick) bool { return k.Off }) &&
+		!(len(out) == 1 && p.Account != nil && !slices.ContainsFunc(p.AccountsOn(), func(a AccountOn) bool {
+			return strings.EqualFold(a.Account.User, out[0].ID)
+		})) {
 		return nil
 	}
 	for i := range out {

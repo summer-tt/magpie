@@ -26,11 +26,21 @@ type AccountOn struct {
 // take, in the user's order: the one signed in to, unless the user paused
 // it for the others on (#263), then the others on; kept signed in to an
 // account of the user's choosing, the one signed in to stands at its own
-// place in the order, not first (#524).
-func (p Provider) AccountsOn() []AccountOn { return p.accountsOrdered(p.AlsoOn()) }
+// place in the order, not first (#524). An account a routing alias is
+// bound to is left out: a request on its own goes to it alone, and the
+// ordinary pool never takes it (RoutingAllows).
+func (p Provider) AccountsOn() []AccountOn {
+	all := p.accountsOrdered(p.AlsoOn())
+	if p.HasRoutingAliases() {
+		all = slices.DeleteFunc(all, func(a AccountOn) bool { return !p.RoutingAllows(a.Provider.RoutingID()) })
+	}
+	return all
+}
 
 // accountsOrdered is AccountsOn with p's other accounts on, also, read
-// already.
+// already, and every account in it: routing filters the result
+// (AccountsOn), and "Test on account…" lists it whole (testAccounts), so
+// an account on is offered there, bound to an alias or not.
 func (p Provider) accountsOrdered(also []Provider) []AccountOn {
 	var all []AccountOn
 	if len(also) == 0 || !p.OwnPaused() {
@@ -38,9 +48,6 @@ func (p Provider) accountsOrdered(also []Provider) []AccountOn {
 	}
 	for i, q := range also {
 		all = append(all, AccountOn{Provider: q, Rank: i + 1})
-	}
-	if p.HasRoutingAliases() {
-		all = slices.DeleteFunc(all, func(a AccountOn) bool { return !p.RoutingAllows(a.Provider.RoutingID()) })
 	}
 	if ranks := p.LoginRanks(); ranks != nil {
 		at := func(a AccountOn) int {

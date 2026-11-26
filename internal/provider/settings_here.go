@@ -28,6 +28,10 @@ var settingFields = []string{
 	"Off",
 	// routing
 	"Fallback", "Routing", "Sink", "UseFirst", "NoStandIn", "Affinity",
+	// the account each routing alias is bound to: the user's routing, and
+	// no credential (docs/plans/account-alias-design.md §12.1). The key
+	// each is bound to goes with the keys (keyAndListFields).
+	"AccountAliases",
 	// limits and rests
 	"MaxConcurrency", "MaxAccounts", "AccountConcurrency", "AccountWeights", "QueueLimit", "QueueWait",
 	"MaxRPM", "MaxImages", "QuotaRest", "QuotaResetAt", "RestCap", "LimitRestOff",

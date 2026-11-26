@@ -1670,7 +1670,9 @@ func syncOnce(ctx context.Context, c Config, st *state, pv *Plan) error {
 		switch {
 		case lc && !rc:
 			take(&merged, local, p)
-			keepServersOwn(&merged, remote, keep, p)
+			if err := keepServersOwn(&merged, remote, keep, p); err != nil {
+				return err
+			}
 		case rc && !lc && first && unset(remote, p) && !unset(local, p):
 			// Joining a file whose part holds nothing of its own (its
 			// first writer had no providers, no settings of its own, an
@@ -1692,7 +1694,9 @@ func syncOnce(ctx context.Context, c Config, st *state, pv *Plan) error {
 		case lc && rc: // both: the newer stays
 			if changed(p, c.Keys).After(remote.Created) {
 				take(&merged, local, p)
-				keepServersOwn(&merged, remote, keep, p)
+				if err := keepServersOwn(&merged, remote, keep, p); err != nil {
+					return err
+				}
 				there = append(there, p)
 			} else {
 				bringIn = append(bringIn, p)

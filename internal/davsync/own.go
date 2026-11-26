@@ -138,7 +138,13 @@ func hashesOwn(b backup.Bundle, own map[string]bool) map[string]string {
 // back into part p (agents or providers) that a sync takes up from here:
 // they never go up. A provider the server doesn't have goes up with this
 // computer's settings, the ones another computer takes for it.
-func keepServersOwn(merged *backup.Bundle, remote backup.Bundle, own map[string]bool, p string) {
+//
+// The names of the routing aliases are whose each was, on every computer,
+// though which account one is bound to is a setting: the server's names
+// stay as the server has them, and this computer's, let go, go up under
+// them. The same name owned by an account here and another there is
+// refused, as a file holding both could be brought in nowhere.
+func keepServersOwn(merged *backup.Bundle, remote backup.Bundle, own map[string]bool, p string) error {
 	if p == "providers" && own[settingsOwn] {
 		theirs := map[string]provider.Provider{}
 		for _, r := range remote.Providers {
@@ -147,13 +153,19 @@ func keepServersOwn(merged *backup.Bundle, remote backup.Bundle, own map[string]
 		ps := slices.Clone(merged.Providers)
 		for i, m := range ps {
 			if r, ok := theirs[m.ID]; ok {
-				ps[i] = provider.WithSettingsOf(m, r)
+				// merged on a copy: on a conflict what goes up is left as
+				// it was read, half of two registries in no provider
+				next := provider.WithSettingsOf(m, r)
+				if err := provider.MergeRoutingHistory(&next, m); err != nil {
+					return err
+				}
+				ps[i] = next
 			}
 		}
 		merged.Providers = ps
 	}
 	if p != "agents" || len(own) == 0 {
-		return
+		return nil
 	}
 	a := maps.Clone(merged.Agents)
 	if a == nil {
@@ -170,6 +182,7 @@ func keepServersOwn(merged *backup.Bundle, remote backup.Bundle, own map[string]
 		}
 	}
 	merged.Agents = a
+	return nil
 }
 
 // brought is a field a bring changed here: the value it wrote over, and

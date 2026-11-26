@@ -186,6 +186,17 @@ normal restore paths; manually deleting the registry or rewriting it with an
 older binary can still remove its history. The binding format is owned by
 [providers and accounts](providers-accounts.md#account-routing-aliases).
 
+With *Sync only the providers' list and API keys* on, which account an alias
+is bound to is a setting and stays on the computer that set it, while the
+names and their owners are still kept on every one. On the way in,
+[`MirrorKeepingSettings`](../../internal/provider/backup.go) puts this
+computer's settings back and then merges the server's names under them,
+let go. On the way up, [`keepServersOwn`](../../internal/davsync/own.go)
+keeps the server's settings in what is pushed and merges this computer's
+names into it; the same name owned by another account here and there
+fails the sync instead of writing a file no computer could bring in.
+`TestRoutingAliasOwnersSurviveProviderSettingsHere` covers both ways.
+
 ## Runtime and state
 
 The gateway runs sync every three minutes by default. `SetAuto` can select a

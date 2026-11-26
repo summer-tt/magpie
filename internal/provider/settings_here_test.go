@@ -16,6 +16,9 @@ var (
 		"ID", "Name", "Was", "Gave", "Icon", "IconFrom", "Preset", "Catalog", "Website", "KeysURL", "IconURL",
 		"Hidden", "Quiet", "Tucked", "Forgot", "AccountNames",
 		"Key", "AccessKeyID", "SecretAccessKey", "SessionToken", "KeyName", "Keys", "KeyProtocol", "KeyWeight", "KeyPlan",
+		// the key each routing alias is bound to, past and present, which
+		// a backup with keys carries and one without leaves out (§12.2–3)
+		"KeyAliases",
 		"Chat", "Responses", "Anthropic", "Gemini", "GeminiFilled", "Decide", "BaseAPI", "ModelsURL",
 		"AuthHeader", "ClientCert", "ClientKey", "ServerCA", "ServerPin", "ZhipuTeam", "Vertex",
 	}

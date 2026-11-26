@@ -1718,8 +1718,10 @@ func toolsTold(m map[string]any, e provider.Entry) {
 
 // modelRows builds a chat model's row of /v1/models as every client is
 // told it: modelObject, the tools it takes (toolsTold), the tiers Codex
-// here is offered on it, its price for a caller told prices, and its
-// label. listModels and AccountsPath's ?models=full both build their rows
+// here is offered on it, its price for a caller told prices, the API it
+// is best asked on here (magpie_prefers, a model's and not a routing
+// group's, whose is told by groupTold with its members), and its label.
+// listModels and AccountsPath's ?models=full both build their rows
 // here, so a plugin reading a model from either reads the same fields.
 type modelRows struct {
 	tiers   map[string][]any
@@ -1758,6 +1760,16 @@ func (rs modelRows) row(e provider.Entry, label string) map[string]any {
 			if rs.prices {
 				m["magpie_price"] = pr
 			}
+		}
+	}
+	// the API it is best asked on here, which native_endpoints' order
+	// doesn't say: its provider's own best one, "" for one translated
+	// anyway. Told to every caller, whether or not the drawers were
+	// asked for: it is about chat APIs and says nothing of drawing. A
+	// routing group's is listModels' to tell, with its members.
+	if e.Group == "" {
+		if pe := provider.PreferredEndpoint(e, nil); pe != "" {
+			m["magpie_prefers"] = pe
 		}
 	}
 	m["magpie_label"] = label
@@ -2086,6 +2098,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 			// the tiers Codex here is offered on each model (#1234), for every
 			// client: another magpie offers them to its own Codex, and Cindy
 			// shows its Fast switch on a model whose tiers hold priority
+			// (#1914). A model with none says nothing (modelRows)
 			rs := newModelRows(r, shown)
 			// each routing group's members, looked up once a list, for what
 			// its row says of the APIs every member relays and of the one
@@ -2139,18 +2152,15 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 				}
-				// the API it is best asked on here, which native_endpoints'
-				// order doesn't say: a model's, its provider's own best
-				// one, "" for one translated anyway; a routing group's,
-				// with the APIs every member relays, what groupTold says.
-				// Told to every caller of the list, not to another magpie
-				// alone, and whether or not the drawers were asked for: it
-				// is about chat APIs and says nothing of drawing
-				if e.Group == "" {
-					if pe := provider.PreferredEndpoint(e, nil); pe != "" {
-						m["magpie_prefers"] = pe
-					}
-				} else {
+				// a routing group's best API, which its members say: the
+				// APIs every member relays and the one the list
+				// recommends, what groupTold tells. Told to every caller
+				// of the list, not to another magpie alone, and whether or
+				// not the drawers were asked for: it is about chat APIs
+				// and says nothing of drawing. A model's own is in its row
+				// (modelRows.row), as /v1/magpie/accounts?models=full
+				// tells it.
+				if e.Group != "" {
 					groupTold(m, e, find)
 				}
 				if magpie {

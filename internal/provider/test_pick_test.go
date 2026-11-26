@@ -168,3 +168,70 @@ func TestModelTestOnAnAccountOff(t *testing.T) {
 		t.Fatalf("unpinned: %+v", rs)
 	}
 }
+
+// A routing alias bound to an account takes that account out of the
+// ordinary pool a request is routed over (RoutingAllows), but not out of
+// "Test on account…": the list is every account, those on in routing's
+// order and then those off, and an account that is on says so, bound or
+// not. accountsOrdered is shared by the two, so the pool's filter must
+// not thin the list: it had the bound account's owner marked Off and the
+// others on left out.
+func TestModelTestAccountsListedWithARoutingAlias(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	p, _ := twoAccountPlugin(t, ctx, nil)
+	if err := SetAccountRoutingAlias(p.ID, p.RoutingIDOf("b@fake"), "work"); err != nil {
+		t.Fatal(err)
+	}
+	q, err := Find(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p = *q
+	if !p.HasRoutingAliases() {
+		t.Fatalf("the binding was not kept: %+v", p.AccountAliases)
+	}
+	// the ordinary pool: the bound account is out of it
+	var pool []string
+	for _, a := range p.AccountsOn() {
+		pool = append(pool, a.Account.User)
+	}
+	if len(pool) != 1 || pool[0] != "a@fake" {
+		t.Fatalf("the ordinary pool with b@fake bound: %v, want a@fake alone", pool)
+	}
+	// the list a test is chosen from: both accounts, neither off
+	var listed []string
+	for _, k := range p.TestPicks() {
+		listed = append(listed, k.ID)
+		if k.Off {
+			t.Errorf("%s is on, and is offered as off (picks %+v)", k.ID, p.TestPicks())
+		}
+	}
+	if len(listed) != 2 || listed[0] != "a@fake" || listed[1] != "b@fake" {
+		t.Fatalf("the accounts offered to a test: %v, want a@fake then b@fake", listed)
+	}
+}
+
+// One account, on and bound to a routing alias, is the one account a test
+// can be sent to alone: the ordinary pool leaves it out, so a test on its
+// own fails, and only "Test on account…" reaches it. The list is not
+// hidden as one account on usually is (nothing to pick between), and it
+// is not marked off.
+func TestModelTestListsTheOneAccountBoundToARoutingAlias(t *testing.T) {
+	p := Provider{ID: "codex", Account: &Account{Agent: "codex", User: "solo"}}
+	p.AccountAliases = map[string]AccountAliasBinding{"work": {AccountID: p.RoutingID(), Active: true}}
+	if got := len(p.AccountsOn()); got != 0 {
+		t.Fatalf("the ordinary pool with its one account bound: %d accounts, want none", got)
+	}
+	got := p.TestPicks()
+	if len(got) != 1 || got[0].ID != "solo" {
+		t.Fatalf("the one account, bound, is offered to a test: %+v, want solo alone", got)
+	}
+	if got[0].Off || got[0].Note != "" {
+		t.Fatalf("solo is on, and is offered as off: %+v", got[0])
+	}
+	// and a test pinned to it goes to that account
+	if q, ok := p.accountNamed("solo"); !ok || q.Account == nil || q.Account.User != "solo" {
+		t.Fatalf("a test on solo does not find it: ok=%v %+v", ok, q.Account)
+	}
+}

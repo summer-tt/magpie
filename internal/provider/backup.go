@@ -146,7 +146,15 @@ func mirror(ps []Provider, gs []Group, settingsHere bool) error {
 			p.KeepLogin, p.KeepLoginAs, p.SwitchOnly, p.RestartApp = h.KeepLogin, h.KeepLoginAs, h.SwitchOnly, h.RestartApp
 			p.KeepSelf = h.KeepSelf
 			if settingsHere {
+				// this computer's settings stay, but the names of the
+				// routing aliases are whose each was, on both: kept whole
+				// above, and the other computer's put back, let go, under
+				// this computer's own bindings
+				owners := p
 				p = WithSettingsOf(p, h)
+				if err := mergeRoutingHistory(&p, owners); err != nil {
+					return err
+				}
 			}
 		} else {
 			p.KeepLoginAs = "" // an account signed in on the other computer
